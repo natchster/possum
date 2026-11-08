@@ -15,9 +15,9 @@ edge** and **screams**, mouth wide open, lap after lap.
 
 ## Download
 
-Ready-made builds are on GitHub: under
-[Releases](https://github.com/natchster/possum/releases), and the newest
-from `main` as artifacts under
+Ready-made builds of every change are on GitHub, under
+[Releases](https://github.com/natchster/possum/releases) (the newest is
+marked **Latest**), and as artifacts under
 [Actions](https://github.com/natchster/possum/actions) (sign in to download).
 
 | System | File |

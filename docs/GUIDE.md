@@ -54,13 +54,15 @@ distribution's Rust if it's new enough, or install it from
 
 ## Download
 
-Released versions are on the
-[Releases](https://github.com/natchster/possum/releases) page. Between
-releases, every push to `main` runs the
+Every push to `main` runs the
 [Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml),
-which builds the same files and keeps them for 90 days: open its latest
-green run (you need to be signed in to GitHub) and download yours from
-**Artifacts**. Each is the file itself, not wrapped in another zip.
+which builds these files, installs and runs them on clean machines, and,
+when everything passes, publishes them as a new release on the
+[Releases](https://github.com/natchster/possum/releases) page: the newest
+is marked **Latest**, and is named after the version and the build number,
+like `v0.1.0-build.12`. The same files also stay with each workflow run as
+**Artifacts** for 90 days (you need to be signed in to GitHub to download
+those); each is the file itself, not wrapped in another zip.
 
 | File | For |
 |---|---|
@@ -498,10 +500,14 @@ Each artifact is a single file uploaded as is (`archive: false`): GitHub's
 usual zip around artifacts would drop the executable permission that the
 app and the Linux binary need.
 
-**Making a release:** set the version in `Cargo.toml`, commit, and push a
-matching tag (`git tag v0.2.0 && git push origin v0.2.0`). After every test
-passes, the workflow drafts a GitHub release with all the files and their
-`SHA256SUMS`; review it on the Releases page and publish it.
+**Releases:** when every check passes on a push to `main`, the workflow
+publishes a GitHub release with all nine files, a `SHA256SUMS` file and a
+table of which file is for which system. It's tagged
+`v<version>-build.<run number>` on the tested commit, so each push gets
+its own. If any file is missing or any check fails, there's no release. To
+release a proper version, set it in `Cargo.toml`, commit, and push a
+matching tag (`git tag v0.2.0 && git push origin v0.2.0`): that release is
+named just "Possum 0.2.0".
 
 ### Testing on a real Linux desktop in a VM
 

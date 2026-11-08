@@ -1,7 +1,9 @@
 # Builds the downloadable apps and packages, then installs and runs each one
 # on clean machines of the kind it's meant for. Every run keeps them as
-# artifacts (one file each, no extra zip around them); pushing a v* tag also
-# puts them in a draft GitHub release.
+# artifacts (one file each, no extra zip around them). When everything
+# passes, a push to main publishes them as a new GitHub release, tagged
+# v<version>-build.<run number>; pushing a v<version> tag publishes them as
+# that version.
 #
 #   Possum-<v>-macos-apple-silicon.zip   Possum.app for Apple Silicon Macs
 #   Possum-<v>-macos-universal.zip       Possum.app for Apple Silicon and Intel
@@ -302,22 +304,34 @@ jobs:
             *.png
             *.log
 
-  # ------------------------------------------------------- draft release
+  # ------------------------------------------------------------- release
 
   release:
-    name: draft release
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: publish release
+    if: github.event_name == 'push'
     needs: [macos-check, windows-check, linux-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - name: Tag matches Cargo.toml
+      - name: Name the release
+        id: name
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          [ "$GITHUB_REF_NAME" = "v$version" ] || {
-            echo "error: tag $GITHUB_REF_NAME but Cargo.toml says $version" >&2; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            # A version tag pushed by hand must match Cargo.toml.
+            [ "$GITHUB_REF_NAME" = "v$version" ] || {
+              echo "error: tag $GITHUB_REF_NAME but Cargo.toml says $version" >&2; exit 1; }
+            tag=$GITHUB_REF_NAME
+            title="Possum $version"
+          else
+            tag="v$version-build.$GITHUB_RUN_NUMBER"
+            title="Possum $version (build $GITHUB_RUN_NUMBER)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "$tag: $title"
       - uses: actions/download-artifact@v8
         with:
           pattern: Possum-*
@@ -332,12 +346,37 @@ jobs:
           merge-multiple: true
           # The file as uploaded, like a browser download: don't unpack zips.
           skip-decompress: true
-      - name: Draft the release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.name.outputs.tag }}
+          TITLE: ${{ steps.name.outputs.title }}
         run: |
           cd dist
+          files=$(ls)
+          # All nine, or no release.
+          [ "$(echo "$files" | wc -l)" -eq 9 ] || { echo "error: expected 9 files, got:" >&2; echo "$files" >&2; exit 1; }
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-            --title "Possum $GITHUB_REF_NAME" --generate-notes ./*
+          pick() { echo "$files" | grep -E "$1"; }
+          cat > ../notes.md <<EOF
+          | System | File |
+          |---|---|
+          | macOS 11+, Apple Silicon | \`$(pick 'apple-silicon')\` |
+          | macOS 11+, Apple Silicon or Intel | \`$(pick 'universal')\` |
+          | Windows 10 / 11 (also on Arm) | \`$(pick 'windows')\` |
+          | Ubuntu, Debian | \`$(pick 'amd64\.deb')\`, \`$(pick 'arm64\.deb')\` |
+          | Fedora | \`$(pick 'x86_64\.rpm')\`, \`$(pick 'aarch64\.rpm')\` |
+          | Any Linux (glibc 2.39+) | \`$(pick 'x86_64\.tar')\`, \`$(pick 'aarch64\.tar')\` |
+
+          They aren't signed by Apple or Microsoft, so the first start needs one
+          extra click: see [Download](https://github.com/${{ github.repository }}/blob/main/docs/GUIDE.md#download)
+          in the guide. Every file was installed and run on clean machines
+          before this release was published.
+          EOF
+          # The tag is made on the tested commit. (A tag made with this
+          # token doesn't start the workflow again.)
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" \
+            --notes-file ../notes.md --generate-notes --latest ./*
+          gh release view "$TAG" --json url,assets \
+            --jq '.url, (.assets[] | "  \(.name)  \(.size) bytes")'
