@@ -9,6 +9,8 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 - [The menu](#the-menu)
 - [Options](#options)
 - [How it works](#how-it-works)
+- [Staying quiet](#staying-quiet)
+- [Multiple displays](#multiple-displays)
 - [Sound design](#sound-design)
 - [Sprite sheet](#sprite-sheet)
 - [Tests](#tests)
@@ -25,6 +27,10 @@ Everything about Possum in detail. For the short version, see the [README](../RE
   **Scream silently** (a speech bubble instead), or make it **Scream Now**
   (see [The menu](#the-menu)).
 - It ignores clicks and never steals focus, so it never gets in your way.
+- It keeps quiet while the screen is locked, the display is off, or the
+  screensaver is running (see [Staying quiet](#staying-quiet)).
+- It always runs around your main display (the one with the menu bar), and
+  follows it when that changes (see [Multiple displays](#multiple-displays)).
 
 It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme.
 
@@ -97,6 +103,7 @@ Click the little screaming possum head in the menu bar:
 --speed <N>        Running speed in points per second (default 260)
 --volume <0..1>    Scream volume (default 0.6)
 --silent           Start in "Scream silently" mode (bubble, no sound)
+-v, --verbose      Log screams, quiet times and display changes to the terminal
 --start <0..1>     Where on the border to start, as a fraction of one lap
 --preview <FILE>   Write a PNG sprite sheet and exit
 --portrait <FILE>  Write a PNG of the screaming possum and exit
@@ -133,11 +140,82 @@ fast possum.
   CPU.
 
 Nothing depends on a particular screen: the track is measured from the
-primary display (the one with the menu bar) at runtime, whatever its size or
-resolution. On MacBooks with a camera notch, the possum briefly runs behind
-the notch on the top edge. Other displays aren't used. If you change
-the resolution or rearrange displays, the possum adjusts its track within a
-second.
+primary display at runtime, whatever its size or resolution. On MacBooks with
+a camera notch, the possum briefly runs behind the notch on the top edge.
+
+## Staying quiet
+
+The possum never makes a sound while:
+
+- the screen is **locked**,
+- the **screensaver** is running,
+- the main **display is off** (asleep),
+- **another user** is using the screen (fast user switching), or
+- the Mac is **going to sleep**.
+
+A scream that's playing when one of these starts is cut off at once. Screams
+that come due meanwhile are skipped silently, and the possum keeps running
+(not that anyone can see it). As soon as everything is back, it's free to
+scream again.
+
+It keeps track in two ways, so it can't miss a change:
+
+1. **Notifications, for an instant reaction.** macOS announces lock/unlock
+   and screensaver start/stop to every app (`com.apple.screenIsLocked`,
+   `com.apple.screensaver.didstart`, and their opposites), and `NSWorkspace`
+   announces displays sleeping and waking, session switches, and system
+   sleep. macOS normally holds these back from inactive apps, and a menu-bar
+   app is never active, so Possum asks for them to be delivered immediately.
+2. **A direct check, once a second and right before every scream.** It reads
+   the session's lock flag and whether this user owns the screen
+   (`CGSessionCopyCurrentDictionary`), whether the main display is asleep
+   (`CGDisplayIsAsleep`), and whether the screensaver app is running. That
+   catches anything a notification missed, including states that were
+   already true when Possum started.
+
+Run it with `--verbose` to watch this happen. Starting the screensaver for a
+few seconds looks like this (macOS also marks the session as locked while
+the screensaver runs, so both show up):
+
+```
+possum [    0.43s] AAAA: out loud
+possum [    2.98s] macOS says: ScreensaverStarted
+possum [    2.98s] keeping quiet: the screensaver is running
+possum [    3.05s] macOS says: ScreenLocked
+possum [    3.85s] hiss: no sound, because the screen is locked
+possum [    6.50s] AAAA: no sound, because the screen is locked
+possum [   14.21s] macOS says: ScreensaverStopped
+possum [   14.23s] macOS says: ScreenUnlocked
+possum [   14.23s] free to scream again
+possum [   15.79s] hiss: out loud
+```
+
+## Multiple displays
+
+The possum runs around the **primary display**: the one with the menu bar.
+Other displays are left alone, so it's always on the screen you look at
+most.
+
+It moves when the primary display changes:
+
+| What happens | What the possum does |
+|---|---|
+| You change the main display's **resolution** | Keeps running on the new size |
+| You drag the **menu bar to another monitor** (System Settings → Displays → Arrange) | Moves to that monitor |
+| You **unplug** the main monitor | Moves to the display that takes over the menu bar |
+| You **plug in** a second monitor | Stays where it is, unless the new monitor becomes the main one |
+| macOS briefly reports **no display** while reconfiguring | Waits until a display is back |
+
+When it moves, it keeps going from **the same spot on the same edge**: if it
+was halfway up the right edge, it continues halfway up the right edge of the
+new screen, even if the new screen has a completely different shape.
+
+It notices changes right away, from macOS's "screen parameters changed"
+notification, and also re-checks every second as a backup. That check looks
+at the primary display's frame *and* where the overlay window really is. The
+second part matters when the menu bar moves between two identical monitors:
+the primary frame looks exactly the same before and after, and only the
+window's position shows that it's on the wrong monitor.
 
 ## Sound design
 
@@ -179,10 +257,13 @@ cargo test --target aarch64-apple-darwin    # Apple Silicon (needs an Apple Sili
 cargo test --target x86_64-apple-darwin     # Intel (runs via Rosetta on an Apple Silicon Mac)
 ```
 
-The tests cover the counterclockwise track geometry and its continuity, the
-WAV and PNG encoders, the sprite frame invariants (paws on the ground in every
-frame), the speech-bubble pointer placement and font, the shape of the long
-hiss, and a golden checksum that keeps the "AAAA" voice identical to the
-original. That checksum differs per architecture: Apple's math library rounds
-a few last bits differently on Intel, so about 2% of samples differ by one
-step out of 32,767 (inaudible).
+The tests cover the counterclockwise track geometry and its continuity on
+screens of every shape; keeping the same edge after a screen change;
+following the primary display through every kind of display change; the
+quiet-time state machine (every lock, screensaver, display and sleep event,
+and the once-a-second check); the WAV and PNG encoders; the sprite frame
+invariants (paws on the ground in every frame); the speech-bubble pointer and
+font; the shape of the long hiss; and a golden checksum that keeps the "AAAA"
+voice identical to the original. That checksum differs per architecture:
+Apple's math library rounds a few last bits differently on Intel, so about 2%
+of samples differ by one step out of 32,767 (inaudible).

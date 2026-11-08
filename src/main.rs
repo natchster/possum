@@ -12,13 +12,16 @@
 //! * Screams are synthesised at start-up and played with `NSSound`.
 
 mod png;
+mod quiet;
 mod scream;
+mod screens;
 mod sprite;
 mod track;
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use block2::RcBlock;
@@ -26,19 +29,23 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDidChangeScreenParametersNotification,
+    NSRunningApplication, NSWorkspace, NSBackingStoreType, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSImage, NSMenu, NSMenuItem, NSScreen,
     NSSound, NSStatusBar, NSStatusItem, NSStatusWindowLevel, NSVariableStatusItemLength,
     NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{
-    CFData, CFRetained, CFType, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize,
+    CFBoolean, CFData, CFString, CFRetained, CFType, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize,
 };
 use objc2_core_graphics::{
-    kCGColorSpaceSRGB, CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider,
+    kCGColorSpaceSRGB, CGDisplayIsAsleep, CGMainDisplayID, CGSessionCopyCurrentDictionary, CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider,
     CGImage, CGImageAlphaInfo,
 };
-use objc2_foundation::{NSData, NSObject, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer};
+use objc2_foundation::{
+    NSData, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
+    NSNotificationSuspensionBehavior, NSObject, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
+};
 use objc2_quartz_core::{kCAFilterNearest, kCAGravityResize, CALayer, CATransaction};
 
 use scream::{Kind, Rng};
@@ -51,6 +58,11 @@ use track::Track;
 /// bubble), `true` is "Scream silently" (you read it in a bubble, no sound).
 static SILENT: AtomicBool = AtomicBool::new(false);
 static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
+
+/// What macOS told us since the last tick: lock, screensaver and sleep
+/// events (see quiet.rs), and whether the displays changed.
+static SYSTEM_EVENTS: Mutex<Vec<quiet::Event>> = Mutex::new(Vec::new());
+static SCREENS_CHANGED: AtomicBool = AtomicBool::new(false);
 
 /// Menu item tags for the two scream modes.
 const TAG_SCREAM: isize = 0;
@@ -77,6 +89,7 @@ struct Options {
     speed: f64,
     volume: f32,
     silent: bool,
+    verbose: bool,
     start: f64,
     preview: Option<String>,
     portrait: Option<String>,
@@ -100,6 +113,8 @@ OPTIONS:
     --preview <FILE>     Write a PNG sprite sheet and exit
     --portrait <FILE>    Write a PNG of the screaming possum and exit
     --iconset <DIR>      Write a macOS .iconset folder and exit
+    -v, --verbose        Log screams, quiet times and display changes to the
+                         terminal
     -h, --help           Show this help
 
 Quit from the possum icon in the menu bar, or with Ctrl+C in the terminal.";
@@ -119,6 +134,7 @@ fn parse_args() -> Options {
         speed: 260.0,
         volume: 0.6,
         silent: false,
+        verbose: false,
         start: 0.0,
         preview: None,
         portrait: None,
@@ -143,6 +159,7 @@ fn parse_args() -> Options {
             "--speed" => o.speed = number("--speed", value("--speed")).clamp(10.0, 5000.0),
             "--volume" => o.volume = number("--volume", value("--volume")).clamp(0.0, 1.0) as f32,
             "--silent" | "--mute" => o.silent = true,
+            "-v" | "--verbose" => o.verbose = true,
             "--start" => o.start = number("--start", value("--start")).rem_euclid(1.0),
             "--preview" => o.preview = Some(value("--preview")),
             "--portrait" => o.portrait = Some(value("--portrait")),
@@ -224,6 +241,101 @@ fn rect(w: f64, h: f64) -> CGRect {
 /// a screen at all. There can briefly be none while displays reconfigure.
 fn primary_screen_frame(mtm: MainThreadMarker) -> Option<CGRect> {
     NSScreen::screens(mtm).iter().next().map(|s| s.frame())
+}
+
+/// Reads the real system state behind quiet.rs: is the screen locked, is
+/// the screensaver running, is the primary display asleep, and does this
+/// user's session own the screen.
+fn probe_system() -> quiet::Probe {
+    let mut probe = quiet::Probe { on_console: true, ..Default::default() };
+    if let Some(session) = CGSessionCopyCurrentDictionary() {
+        let flag = |key: &'static str| -> Option<bool> {
+            let key = CFString::from_static_str(key);
+            // SAFETY: the session dictionary maps CFString keys to CF
+            // objects; the value is only used after checking its type.
+            let value = unsafe { session.value((&*key as *const CFString).cast()) };
+            if value.is_null() {
+                return None;
+            }
+            let value: &CFType = unsafe { &*value.cast::<CFType>() };
+            Some(value.downcast_ref::<CFBoolean>().is_none_or(CFBoolean::as_bool))
+        };
+        probe.screen_locked = flag("CGSSessionScreenIsLocked").unwrap_or(false);
+        probe.on_console = flag("kCGSSessionOnConsoleKey").unwrap_or(true);
+    }
+    probe.display_asleep = CGDisplayIsAsleep(CGMainDisplayID());
+    let engine = NSString::from_str("com.apple.ScreenSaver.Engine");
+    probe.screensaver = NSRunningApplication::runningApplicationsWithBundleIdentifier(&engine).count() > 0;
+    probe
+}
+
+fn queue_system_event(event: quiet::Event) {
+    SYSTEM_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+}
+
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements and we don't
+    // implement Drop.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "PossumSystemWatcher"]
+    /// Receives the macOS notifications that matter to the possum.
+    struct SystemWatcher;
+
+    impl SystemWatcher {
+        #[unsafe(method(systemEvent:))]
+        fn system_event(&self, note: &NSNotification) {
+            if let Some(event) = quiet::Event::from_notification(&note.name().to_string()) {
+                queue_system_event(event);
+            }
+        }
+
+        #[unsafe(method(screensChanged:))]
+        fn screens_changed(&self, _note: &NSNotification) {
+            SCREENS_CHANGED.store(true, Ordering::Relaxed);
+        }
+    }
+);
+
+impl SystemWatcher {
+    /// Subscribes to lock, screensaver, sleep and display-change
+    /// notifications. The watcher must stay alive while the app runs.
+    fn start(mtm: MainThreadMarker) -> Retained<Self> {
+        let this: Retained<Self> = unsafe { msg_send![super(Self::alloc(mtm).set_ivars(())), init] };
+        // SAFETY: the selectors exist on the watcher with the right
+        // signature, and the watcher outlives the subscriptions.
+        unsafe {
+            // Distributed notifications are held back while an app is
+            // inactive, and a menu-bar app is never active; ask for them
+            // right away instead.
+            let distributed = NSDistributedNotificationCenter::defaultCenter();
+            for name in quiet::DISTRIBUTED_NOTIFICATIONS {
+                distributed.addObserver_selector_name_object_suspensionBehavior(
+                    &this,
+                    sel!(systemEvent:),
+                    Some(&NSString::from_str(name)),
+                    None,
+                    NSNotificationSuspensionBehavior::DeliverImmediately,
+                );
+            }
+            let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+            for name in quiet::WORKSPACE_NOTIFICATIONS {
+                workspace.addObserver_selector_name_object(
+                    &this,
+                    sel!(systemEvent:),
+                    Some(&NSString::from_str(name)),
+                    None,
+                );
+            }
+            NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &this,
+                sel!(screensChanged:),
+                Some(NSApplicationDidChangeScreenParametersNotification),
+                None,
+            );
+        }
+        this
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +499,10 @@ struct Possum {
     shown: Option<(bool, usize)>,
     yell_shown: Option<usize>,
     was_silent: bool,
+    /// Whether, and why, it must not make a sound right now.
+    quiet: quiet::Quiet,
+    was_quiet: Option<quiet::Reason>,
+    verbose: bool,
     /// The possum alternates: "AAAA", hiss, "AAAA", hiss...
     next_kind: Kind,
     kind: Kind,
@@ -440,6 +556,9 @@ impl Possum {
             shown: None,
             yell_shown: None,
             was_silent: SILENT.load(Ordering::Relaxed),
+            quiet: quiet::Quiet::default(),
+            was_quiet: None,
+            verbose: opts.verbose,
             // It opens with an "AAAA".
             next_kind: Kind::Aaaa,
             kind: Kind::Aaaa,
@@ -447,6 +566,11 @@ impl Possum {
             bubble_shown: None,
             rng,
         };
+        possum.quiet.update(probe_system());
+        possum.log(format_args!(
+            "running around the primary display, {}x{}",
+            screen.size.width, screen.size.height
+        ));
         possum.tick();
         possum
     }
@@ -456,19 +580,26 @@ impl Possum {
         Track::new(screen.size.width, screen.size.height, 26.0 * scale)
     }
 
-    /// Follow display changes (resolution, arrangement, plugging monitors).
+    /// Follow display changes (resolution, arrangement, plugging monitors);
+    /// see screens.rs.
     fn check_screen(&mut self) {
-        // No screen right now (displays reconfiguring): try again later.
-        let Some(frame) = primary_screen_frame(self.mtm) else { return };
-        // Also check where the window really is: when the menu bar moves to
-        // another monitor of the same size, the new primary frame is equal
-        // to the old one, but the window is still on the old monitor.
-        if frame != self.screen || self.window.frame() != frame {
-            let progress = self.distance / self.track.perimeter();
-            self.screen = frame;
-            self.track = Self::make_track(frame, self.scale);
-            self.distance = progress * self.track.perimeter();
-            self.window.setFrame_display(frame, true);
+        let primary = primary_screen_frame(self.mtm);
+        let Some(frame) = screens::follow(primary, self.screen, self.window.frame()) else { return };
+        let track = Self::make_track(frame, self.scale);
+        // Keep running from the same spot on the same edge.
+        self.distance = self.track.carry_over(self.distance, &track);
+        self.track = track;
+        self.screen = frame;
+        self.window.setFrame_display(frame, true);
+        self.log(format_args!(
+            "following the primary display: now {}x{}",
+            frame.size.width, frame.size.height
+        ));
+    }
+
+    fn log(&self, message: std::fmt::Arguments) {
+        if self.verbose {
+            eprintln!("possum [{:8.2}s] {message}", self.clock.elapsed().as_secs_f64());
         }
     }
 
@@ -482,8 +613,21 @@ impl Possum {
         let pick = self.rng.next_u32() as usize % self.sounds[k].len();
         // A new scream cuts off the last one (which is always the other kind).
         self.hush();
-        let (sound, seconds) = &self.sounds[k][pick];
-        if !SILENT.load(Ordering::Relaxed) && !sound.play() {
+        // Look again right before making noise, so a lock or screensaver
+        // that started a moment ago is never missed.
+        self.quiet.update(probe_system());
+        let (sound, seconds) = (&self.sounds[k][pick].0, self.sounds[k][pick].1);
+        let what = match self.kind {
+            Kind::Aaaa => "AAAA",
+            Kind::Hiss => "hiss",
+        };
+        if let Some(reason) = self.quiet.reason() {
+            self.log(format_args!("{what}: no sound, because {}", reason.describe()));
+        } else if SILENT.load(Ordering::Relaxed) {
+            self.log(format_args!("{what}: silently, in a speech bubble"));
+        } else if sound.play() {
+            self.log(format_args!("{what}: out loud"));
+        } else {
             eprintln!("possum: could not play the scream (no audio output?)");
         }
         self.scream_until = now + seconds;
@@ -542,9 +686,33 @@ impl Possum {
         let dt = (now - self.last_tick).clamp(0.0, 0.1);
         self.last_tick = now;
 
+        // React to macOS right away, and re-read the real state every second
+        // in case a notification never came.
+        let events: Vec<quiet::Event> =
+            std::mem::take(&mut *SYSTEM_EVENTS.lock().unwrap_or_else(|e| e.into_inner()));
+        for event in events {
+            self.log(format_args!("macOS says: {event:?}"));
+            self.quiet.apply(event);
+        }
+        if SCREENS_CHANGED.swap(false, Ordering::Relaxed) {
+            self.check_screen();
+        }
         if now >= self.next_screen_check {
             self.next_screen_check = now + 1.0;
             self.check_screen();
+            self.quiet.update(probe_system());
+        }
+        let quiet = self.quiet.reason();
+        if quiet != self.was_quiet {
+            match quiet {
+                Some(reason) => {
+                    // Locked, screensaver, display off...: stop mid-scream.
+                    self.hush();
+                    self.log(format_args!("keeping quiet: {}", reason.describe()));
+                }
+                None => self.log(format_args!("free to scream again")),
+            }
+            self.was_quiet = quiet;
         }
 
         if SCREAM_NOW.swap(false, Ordering::Relaxed) {
@@ -815,6 +983,7 @@ fn main() {
     let possum = RefCell::new(Possum::new(mtm, &opts));
     let target = MenuTarget::new(mtm);
     let _status_item = install_status_item(mtm, &app, &target);
+    let _watcher = SystemWatcher::start(mtm);
 
     let tick = RcBlock::new(move |_timer: NonNull<NSTimer>| possum.borrow_mut().tick());
     // SAFETY: the block only touches main-thread state and the timer fires
@@ -831,6 +1000,34 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_notification_names_match_appkit() {
+        // quiet.rs spells these out as strings; make sure they are exactly
+        // what AppKit posts.
+        // SAFETY: reading immutable AppKit string constants.
+        let appkit = unsafe {
+            [
+                objc2_app_kit::NSWorkspaceScreensDidSleepNotification,
+                objc2_app_kit::NSWorkspaceScreensDidWakeNotification,
+                objc2_app_kit::NSWorkspaceSessionDidResignActiveNotification,
+                objc2_app_kit::NSWorkspaceSessionDidBecomeActiveNotification,
+                objc2_app_kit::NSWorkspaceWillSleepNotification,
+                objc2_app_kit::NSWorkspaceDidWakeNotification,
+            ]
+        };
+        for (ours, theirs) in quiet::WORKSPACE_NOTIFICATIONS.iter().zip(appkit) {
+            assert_eq!(*ours, theirs.to_string());
+        }
+    }
+
+    #[test]
+    fn the_probe_reads_a_normal_unlocked_session() {
+        // Tests run in a logged-in, unlocked session with the display on.
+        let probe = probe_system();
+        assert!(!probe.screen_locked && !probe.screensaver && !probe.display_asleep, "{probe:?}");
+        assert!(probe.on_console, "{probe:?}");
+    }
 
     #[test]
     fn numbers_must_be_finite() {

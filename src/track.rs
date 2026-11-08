@@ -36,14 +36,51 @@ impl Track {
         2.0 * (self.w - 2.0 * self.r) + 2.0 * (self.h - 2.0 * self.r) + TAU * self.r
     }
 
+    /// Lengths of the 8 segments, counterclockwise from the bottom edge:
+    /// bottom edge, corner, right edge, corner, top edge, corner, left edge,
+    /// corner.
+    fn segment_lengths(&self) -> [f64; 8] {
+        let horizontal = self.w - 2.0 * self.r;
+        let vertical = self.h - 2.0 * self.r;
+        let arc = FRAC_PI_2 * self.r;
+        [horizontal, arc, vertical, arc, horizontal, arc, vertical, arc]
+    }
+
+    /// Where `distance` falls on the border: which segment (see
+    /// `segment_lengths`) and how far into it, from 0.0 to 1.0.
+    pub fn locate(&self, distance: f64) -> (usize, f64) {
+        let mut d = distance.rem_euclid(self.perimeter());
+        let lengths = self.segment_lengths();
+        for (i, len) in lengths.iter().enumerate() {
+            if d <= *len || i == lengths.len() - 1 {
+                let fraction = if *len > 0.0 { (d / len).clamp(0.0, 1.0) } else { 0.0 };
+                return (i, fraction);
+            }
+            d -= len;
+        }
+        unreachable!()
+    }
+
+    /// The distance of a spot given as segment and fraction: the inverse of
+    /// `locate`.
+    pub fn distance_at(&self, segment: usize, fraction: f64) -> f64 {
+        let lengths = self.segment_lengths();
+        lengths[..segment].iter().sum::<f64>() + lengths[segment] * fraction
+    }
+
+    /// The same spot on another track (after a screen change): on the same
+    /// edge or corner, at the same relative position along it. Keeping just
+    /// the fraction of the whole lap could land on a different edge when the
+    /// screen's shape changes.
+    pub fn carry_over(&self, distance: f64, to: &Track) -> f64 {
+        let (segment, fraction) = self.locate(distance);
+        to.distance_at(segment, fraction)
+    }
+
     /// Pose after travelling `distance` from the bottom-left end of the
     /// bottom edge.
     pub fn pose(&self, distance: f64) -> Pose {
         let (w, h, r) = (self.w, self.h, self.r);
-        let horizontal = w - 2.0 * r;
-        let vertical = h - 2.0 * r;
-        let arc = FRAC_PI_2 * r;
-
         let mut d = distance.rem_euclid(self.perimeter());
         // (length, kind): straight segments carry start point + heading,
         // arcs carry centre + start angle.
@@ -51,15 +88,16 @@ impl Track {
             Line { x: f64, y: f64, heading: f64 },
             Arc { cx: f64, cy: f64, start: f64 },
         }
+        let lengths = self.segment_lengths();
         let segments = [
-            (horizontal, Seg::Line { x: r, y: 0.0, heading: 0.0 }),
-            (arc, Seg::Arc { cx: w - r, cy: r, start: -FRAC_PI_2 }),
-            (vertical, Seg::Line { x: w, y: r, heading: FRAC_PI_2 }),
-            (arc, Seg::Arc { cx: w - r, cy: h - r, start: 0.0 }),
-            (horizontal, Seg::Line { x: w - r, y: h, heading: PI }),
-            (arc, Seg::Arc { cx: r, cy: h - r, start: FRAC_PI_2 }),
-            (vertical, Seg::Line { x: 0.0, y: h - r, heading: 3.0 * FRAC_PI_2 }),
-            (arc, Seg::Arc { cx: r, cy: r, start: PI }),
+            (lengths[0], Seg::Line { x: r, y: 0.0, heading: 0.0 }),
+            (lengths[1], Seg::Arc { cx: w - r, cy: r, start: -FRAC_PI_2 }),
+            (lengths[2], Seg::Line { x: w, y: r, heading: FRAC_PI_2 }),
+            (lengths[3], Seg::Arc { cx: w - r, cy: h - r, start: 0.0 }),
+            (lengths[4], Seg::Line { x: w - r, y: h, heading: PI }),
+            (lengths[5], Seg::Arc { cx: r, cy: h - r, start: FRAC_PI_2 }),
+            (lengths[6], Seg::Line { x: 0.0, y: h - r, heading: 3.0 * FRAC_PI_2 }),
+            (lengths[7], Seg::Arc { cx: r, cy: r, start: PI }),
         ];
         let last = segments.len() - 1;
         for (i, (len, seg)) in segments.iter().enumerate() {
@@ -150,6 +188,43 @@ mod tests {
                     let on_screen = (-1e-6..=w + 1e-6).contains(&p.x) && (-1e-6..=h + 1e-6).contains(&p.y);
                     assert!(on_screen, "{w}x{h} at scale {scale}: {p:?} is off screen");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn locate_and_distance_at_are_inverses() {
+        let t = Track::new(1512.0, 982.0, 78.0);
+        let n = 1000;
+        for i in 0..n {
+            let d = t.perimeter() * i as f64 / n as f64;
+            let (segment, fraction) = t.locate(d);
+            assert!(segment < 8 && (0.0..=1.0).contains(&fraction));
+            assert!((t.distance_at(segment, fraction) - d).abs() < 1e-6, "at {d}");
+        }
+    }
+
+    #[test]
+    fn carry_over_keeps_the_same_edge_and_spot_on_any_new_screen() {
+        // From a MacBook to an ultrawide, a portrait monitor and a tiny screen.
+        let from = Track::new(1512.0, 982.0, 78.0);
+        let targets = [
+            Track::new(3440.0, 1440.0, 78.0),
+            Track::new(1080.0, 1920.0, 78.0),
+            Track::new(400.0, 300.0, 78.0),
+            Track::new(1512.0, 982.0, 156.0), // same screen, bigger --scale
+        ];
+        let n = 400;
+        for to in targets {
+            for i in 0..n {
+                let d = from.perimeter() * (i as f64 + 0.5) / n as f64;
+                let carried = from.carry_over(d, &to);
+                let (a, b) = (from.pose(d), to.pose(carried));
+                assert!((a.heading - b.heading).abs() < 1e-6, "edge changed: {a:?} -> {b:?}");
+                let (sa, fa) = from.locate(d);
+                let (sb, fb) = to.locate(carried);
+                assert_eq!(sa, sb);
+                assert!((fa - fb).abs() < 1e-9);
             }
         }
     }
