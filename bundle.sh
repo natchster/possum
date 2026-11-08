@@ -3,9 +3,11 @@
 # no Dock icon (LSUIElement), ad-hoc signed.
 #
 #   ./bundle.sh              Universal (Apple Silicon + Intel) when both Rust
-#                            targets are installed, otherwise this Mac only
+#                            targets are installed, otherwise Apple Silicon
+#                            only (Intel only, when built on an Intel Mac)
 #   ./bundle.sh --universal  Universal, or fail if a Rust target is missing
-#   ./bundle.sh --native     This Mac's architecture only (fastest)
+#   ./bundle.sh --native     Apple Silicon only (Intel only, on an Intel Mac);
+#                            the fastest build
 #
 # Universal builds need both targets:
 #   rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -19,7 +21,7 @@ case "${1:-}" in
     "") ;;
     --universal) mode=universal ;;
     --native) mode=native ;;
-    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: $0 [--universal | --native]" >&2; exit 2 ;;
 esac
 
@@ -37,7 +39,14 @@ if [ "$mode" = auto ]; then
         mode=universal
     else
         mode=native
-        echo "note: building for this Mac only. For an app that runs on both" >&2
+        # Name the architecture rustc builds for by default (the host).
+        host=$(rustc -vV | sed -n 's/^host: //p')
+        case "$host" in
+            aarch64-*) native="Apple Silicon" ;;
+            x86_64-*) native="Intel" ;;
+            *) native="$host" ;;
+        esac
+        echo "note: building for $native Macs only. For an app that runs on both" >&2
         echo "      Apple Silicon and Intel Macs: rustup target add ${targets[*]}" >&2
     fi
 elif [ "$mode" = universal ] && ! have_all_targets; then
@@ -82,8 +91,8 @@ else
     cp "$bin" "$exe"
 fi
 
-# The icon is generated from the same pixel art as the sprite. (macOS runs
-# the bundled binary's slice for this Mac.)
+# The icon is generated from the same pixel art as the sprite. (On an Apple
+# Silicon Mac, macOS runs the binary's Apple Silicon slice; on Intel, Intel.)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 "$exe" --iconset "$tmp/Possum.iconset" >/dev/null

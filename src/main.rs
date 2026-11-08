@@ -406,6 +406,9 @@ impl Possum {
 
         let art = Art::load();
         let sounds = load_sounds(&mut rng, seed, opts.volume);
+        // macOS reporting no screen at all at launch is very unlikely; if it
+        // does, start with a placeholder size and adopt the real screen on
+        // the first display check, a second later.
         let screen = primary_screen_frame(mtm).unwrap_or_else(|| rect(1440.0, 900.0));
         let window = overlay_window(mtm, screen);
         let view = window.contentView().expect("window has a content view");

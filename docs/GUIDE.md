@@ -53,12 +53,13 @@ appears on every Space (full-screen apps included), runs over the menu bar
 and the Dock, and ignores mouse clicks, so it never gets in your way.
 
 `bundle.sh` builds a **universal** app (Apple Silicon + Intel) when both Rust
-targets are installed. Otherwise it builds for your Mac only and tells you
-how to add the missing target. You can also choose:
+targets are installed. Otherwise it builds for Apple Silicon Macs only
+(Intel only, if you build on an Intel Mac) and tells you how to add the
+missing target. You can also choose:
 
 ```sh
 ./bundle.sh --universal   # Apple Silicon + Intel, or fail if a target is missing
-./bundle.sh --native      # just this Mac's architecture (fastest)
+./bundle.sh --native      # Apple Silicon only (Intel on an Intel Mac); fastest
 ```
 
 ## Installing
@@ -70,7 +71,8 @@ how to add the missing target. You can also choose:
 - **Start at login:** System Settings → General → Login Items → **+** →
   Possum.
 - **Copying it to another Mac:** a universal build runs on both Apple
-  Silicon and Intel Macs (a `--native` one only on the same kind of Mac).
+  Silicon and Intel Macs. A `--native` build made on an Apple Silicon Mac
+  runs only on Apple Silicon Macs.
   The app is signed ad hoc, without an Apple Developer ID or notarization,
   so on another Mac, Gatekeeper blocks it the first time. Open it anyway
   from System Settings → Privacy & Security → **Open Anyway** (on macOS 14
@@ -121,14 +123,19 @@ fast possum.
   travel, so the paws always touch the screen edge. Counterclockwise is just
   a heading angle that keeps increasing: 0° → 90° → 180° → 270°.
 * **Crisp pixels.** Frames are tiny native-resolution `CGImage`s (64×32)
-  scaled up with `kCAFilterNearest`, so they stay sharp on Retina displays.
+  scaled up with `kCAFilterNearest`, so they stay sharp on any display,
+  Retina or not.
 * **Readable screams.** The speech bubble is *not* a child of the rotating
   possum layer. It is placed separately, always upright, ahead of the head
   and toward the middle of the screen.
 * **No assets.** Every pixel and every scream is generated at startup. The
-  release binary is about 400 KB and uses roughly 1% CPU.
+  universal binary is under 1 MB. On an Apple Silicon Mac it uses about 1%
+  CPU.
 
-Only the primary display (the one with the menu bar) is used. If you change
+Nothing depends on a particular screen: the track is measured from the
+primary display (the one with the menu bar) at runtime, whatever its size or
+resolution. On MacBooks with a camera notch, the possum briefly runs behind
+the notch on the top edge. Other displays aren't used. If you change
 the resolution or rearrange displays, the possum adjusts its track within a
 second.
 
@@ -168,8 +175,8 @@ of the README with `cargo run -- --portrait possum.png`.
 ## Tests
 
 ```sh
-cargo test                                  # this Mac
-cargo test --target x86_64-apple-darwin     # the Intel build (via Rosetta on Apple Silicon)
+cargo test --target aarch64-apple-darwin    # Apple Silicon (needs an Apple Silicon Mac)
+cargo test --target x86_64-apple-darwin     # Intel (runs via Rosetta on an Apple Silicon Mac)
 ```
 
 The tests cover the counterclockwise track geometry and its continuity, the

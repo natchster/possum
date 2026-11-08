@@ -128,6 +128,33 @@ mod tests {
     }
 
     #[test]
+    fn works_on_any_screen_shape() {
+        // A tiny window, common MacBook and desktop sizes, an ultrawide, a 6K
+        // display, and a portrait monitor; at the smallest, default and
+        // largest --scale (which sets the corner radius).
+        let screens = [
+            (320.0, 240.0),
+            (1280.0, 800.0),
+            (1512.0, 982.0),
+            (2560.0, 1440.0),
+            (3440.0, 1440.0),
+            (6016.0, 3384.0),
+            (1080.0, 1920.0),
+        ];
+        for (w, h) in screens {
+            for scale in [1.0, 3.0, 12.0] {
+                let t = Track::new(w, h, 26.0 * scale);
+                let n = 4000;
+                for i in 0..=n {
+                    let p = t.pose(t.perimeter() * i as f64 / n as f64);
+                    let on_screen = (-1e-6..=w + 1e-6).contains(&p.x) && (-1e-6..=h + 1e-6).contains(&p.y);
+                    assert!(on_screen, "{w}x{h} at scale {scale}: {p:?} is off screen");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn heading_turns_smoothly_at_corners() {
         let t = Track::new(800.0, 600.0, 40.0);
         let mid_corner = t.pose(720.0 + 10.0 * PI); // halfway round the first arc
