@@ -137,7 +137,9 @@ jobs:
         run: |
           # A bare X server, no compositor: Possum cuts its windows to shape,
           # so it needs none.
-          Xvfb :99 -screen 0 1280x800x24 +extension RANDR > xvfb.log 2>&1 &
+          # -noreset: otherwise the server resets (and forgets the background)
+          # when xsetroot, its only client so far, exits.
+          Xvfb :99 -screen 0 1280x800x24 +extension RANDR -noreset > xvfb.log 2>&1 &
           export DISPLAY=:99
           sleep 2
           xsetroot -solid '#5b8bd6' || true
