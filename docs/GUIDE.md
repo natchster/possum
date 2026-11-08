@@ -4,6 +4,7 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 
 - [What it does, in detail](#what-it-does-in-detail)
 - [Requirements](#requirements)
+- [Download](#download)
 - [Build and run on macOS](#build-and-run-on-macos)
 - [Build and run on Windows](#build-and-run-on-windows)
 - [Build and run on Linux](#build-and-run-on-linux)
@@ -41,7 +42,7 @@ It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme
 | | macOS | Windows | Linux |
 |---|---|---|---|
 | **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work |
-| **Processor** | Apple Silicon or Intel (one universal app) | x86-64 | x86-64 |
+| **Processor** | Apple Silicon or Intel (one universal app) | x86-64; Windows on Arm runs it through its built-in emulation | x86-64 or ARM64 |
 | **To build** | Rust 1.85+ and the Xcode Command Line Tools | Rust 1.85+ and the Visual Studio C++ Build Tools | Rust 1.85+ and `gcc` (as the linker) |
 | **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
 | **Permissions** | None | None | None |
@@ -50,6 +51,67 @@ Rust 1.85 is the oldest version Possum builds with. That's the version
 Debian 13 packages, so its own `cargo` works; elsewhere, use your
 distribution's Rust if it's new enough, or install it from
 [rustup.rs](https://rustup.rs).
+
+## Download
+
+Every push to `main` runs the
+[Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml),
+which builds these files and keeps them for 90 days. Open its latest green
+run (you need to be signed in to GitHub) and download yours from
+**Artifacts**: each is the file itself, not wrapped in another zip.
+
+| File | For |
+|---|---|
+| `Possum-<version>-macos-apple-silicon.zip` | Macs with Apple Silicon (M1 and later), macOS 11+ |
+| `Possum-<version>-macos-universal.zip` | Any Mac with macOS 11+, Apple Silicon or Intel (twice the size) |
+| `possum-<version>-windows-x86_64.zip` | Windows 10 (1703+) and 11, including Windows on Arm |
+| `possum_<version>_amd64.deb`, `_arm64.deb` | Ubuntu, Debian and their relatives |
+| `possum-<version>-1.x86_64.rpm`, `.aarch64.rpm` | Fedora and its relatives |
+| `possum-<version>-linux-x86_64.tar.gz`, `-aarch64.tar.gz` | Any Linux with glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, Fedora 40+) |
+
+Not sure which processor you have? On a Mac, Apple menu → About This Mac says "Chip:
+Apple M…" or "Processor: Intel". On Linux, `uname -m` prints `x86_64`
+(amd64) or `aarch64` (arm64).
+
+**macOS:** double-click the zip to unpack `Possum.app` and drag it into
+Applications. It's signed ad hoc, not with an Apple Developer ID, and isn't
+notarized, so the first time you open it macOS says it can't verify it.
+Click **Done**, then open System Settings → Privacy & Security, scroll down
+to "Possum was blocked" and click **Open Anyway**. After that it opens like
+any app. (In a terminal, `xattr -dr com.apple.quarantine
+/Applications/Possum.app` does the same.)
+
+**Windows:** unpack the zip and run `possum.exe`; it's a single file and
+needs nothing else installed (not even the Visual C++ runtime). It isn't
+signed, so the first time SmartScreen may say "Windows protected your PC":
+click **More info → Run anyway**.
+
+**Linux:** install the package for your distribution, with its file name in
+place of these:
+
+```sh
+sudo apt install ./possum_0.1.0_amd64.deb       # Ubuntu, Debian
+sudo dnf install ./possum-0.1.0-1.x86_64.rpm    # Fedora
+```
+
+Possum then shows up in your app list, and `possum` works in a terminal.
+The packages recommend a sound player (`pw-play`, `paplay` or `aplay`),
+which desktop installs already have. Uninstall with `sudo apt remove
+possum` or `sudo dnf remove possum`.
+
+The tarball holds the same files as the packages, under `bin/` and
+`share/`. Run `bin/possum` straight from it, or install it for yourself
+only, app-list entry and icon included, with no root needed:
+
+```sh
+tar -xzf possum-0.1.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
+```
+
+(That puts `possum` in `~/.local/bin`, which Ubuntu, Debian and Fedora add
+to your PATH once the folder exists; log out and back in if `possum` isn't
+found.)
+
+**How they're made:** see [Release builds](#release-builds) under Tests.
 
 ## Build and run on macOS
 
@@ -139,7 +201,8 @@ Good to know:
 
 **macOS**
 
-- **Keep it:** drag `dist/Possum.app` into `/Applications`.
+- **Keep it:** drag `Possum.app` (downloaded, or built into `dist/`) into
+  `/Applications`.
 - **Finding it:** Possum has no Dock icon and doesn't appear in the
   Command-Tab switcher. It lives in the menu bar, as a little screaming
   possum head.
@@ -148,14 +211,15 @@ Good to know:
 - **Copying it to another Mac:** a universal build runs on both Apple
   Silicon and Intel Macs. A `--native` build made on an Apple Silicon Mac
   runs only on Apple Silicon Macs. The app is signed ad hoc, without an
-  Apple Developer ID or notarization, so on another Mac, Gatekeeper blocks it
-  the first time. Open it anyway from System Settings → Privacy & Security →
-  **Open Anyway** (on macOS 14 and earlier, Control-click → Open also works),
-  or build it on that Mac with `./bundle.sh`.
+  Apple Developer ID or notarization, so on another Mac (or downloaded),
+  Gatekeeper blocks it the first time. Open it anyway from System Settings →
+  Privacy & Security → **Open Anyway** (see [Download](#download)), or build
+  it on that Mac with `./bundle.sh`.
 
 **Windows**
 
-- **Keep it:** copy `target\release\possum.exe` anywhere, for example to
+- **Keep it:** copy `possum.exe` (downloaded, or built into
+  `target\release\`) anywhere, for example to
   `%LOCALAPPDATA%\Programs\Possum`. It's a single file.
 - **Finding it:** it has no taskbar button; it lives in the notification
   area (the tray), possibly behind the **^** overflow arrow.
@@ -167,9 +231,12 @@ Good to know:
 
 **Linux**
 
-- **Keep it:** copy `target/release/possum` into `~/.local/bin` (or
-  `/usr/local/bin`).
-- **Start at login:** save this as `~/.config/autostart/possum.desktop`:
+- **Keep it:** install the `.deb` or `.rpm`, or unpack the tarball into
+  `~/.local` (see [Download](#download)). Built yourself: copy
+  `target/release/possum` into `~/.local/bin` (or `/usr/local/bin`).
+- **Start at login:** with the package installed, `cp
+  /usr/share/applications/possum.desktop ~/.config/autostart/`. Otherwise,
+  save this as `~/.config/autostart/possum.desktop`:
 
   ```ini
   [Desktop Entry]
@@ -394,6 +461,45 @@ push, on **macOS** (Apple Silicon, and Intel through Rosetta), **Windows**,
 Debian's own Rust 1.85). It also starts the real app on each of them (a bare
 virtual X server on Linux, without a compositor) and keeps screenshots and
 logs as artifacts.
+
+### Release builds
+
+The [Release workflow](../.github/workflows/release.yml) makes the files in
+[Download](#download), then tests each one the way a user gets it: freshly
+downloaded onto a clean machine, unpacked or installed, and run.
+
+- **macOS:** `bundle.sh --native` and `--universal` on an Apple Silicon
+  runner. Checked: the right architectures (`lipo`), every slice built for
+  macOS 11 (`vtool`), a valid signature. Then, on clean Apple Silicon *and
+  Intel* Macs: unzipped with `ditto`, signature checked again, opened through
+  Launch Services like a double-click, run in both modes and photographed.
+  The universal app's Intel half is also run through Rosetta.
+- **Windows:** built with the C runtime linked in (`.cargo/config.toml`),
+  and `dumpbin` checks it imports no Visual C++ runtime DLL, so it runs on a
+  bare Windows. Then run on Windows Server 2022 and 2025, and on Windows 11
+  on Arm through emulation, with screenshots.
+- **Linux:** built in a **Debian 13** container on x86_64 and ARM64
+  machines. Debian 13 has the oldest C library of the three supported
+  distributions, and programs built against an older glibc run on newer
+  ones, so one binary per architecture covers them all.
+  [`packaging/linux/package.sh`](../packaging/linux/package.sh) wraps it as
+  a tarball, a `.deb` (`dpkg-deb`) and an `.rpm` (`rpmbuild`), with the app
+  list entry and icons drawn by `possum --iconset`; the `.deb`'s glibc
+  requirement is read from the binary. Then, on **Ubuntu 26.04, Debian 13 and
+  Fedora 45, each on x86_64 and ARM64**, the package is installed with `apt`
+  or `dnf` (which pull in its dependencies), the app list entry is checked
+  with `desktop-file-validate`, the app runs on a virtual screen (and must
+  draw something), the tarball's binary runs too, and the package
+  uninstalls cleanly.
+
+Each artifact is a single file uploaded as is (`archive: false`): GitHub's
+usual zip around artifacts would drop the executable permission that the
+app and the Linux binary need.
+
+**Making a release:** set the version in `Cargo.toml`, commit, and push a
+matching tag (`git tag v0.2.0 && git push origin v0.2.0`). After every test
+passes, the workflow drafts a GitHub release with all the files and their
+`SHA256SUMS`; review it on the Releases page and publish it.
 
 ### Testing on a real Linux desktop in a VM
 

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Possum
+GenericName=Screaming possum
+Comment=A screaming pixel-art possum runs around the edge of your screen
+Exec=possum
+Icon=possum
+Terminal=false
+StartupNotify=false
+Categories=Game;Amusement;
+Keywords=possum;opossum;scream;pixel;

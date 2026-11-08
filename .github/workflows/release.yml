@@ -1,0 +1,333 @@
+# Builds the downloadable apps and packages, then installs and runs each one
+# on clean machines of the kind it's meant for. Every run keeps them as
+# artifacts (one file each, no extra zip around them); pushing a v* tag also
+# puts them in a draft GitHub release.
+#
+#   Possum-<v>-macos-apple-silicon.zip   Possum.app for Apple Silicon Macs
+#   Possum-<v>-macos-universal.zip       Possum.app for Apple Silicon and Intel
+#   possum-<v>-windows-x86_64.zip        possum.exe (Windows on Arm runs it too)
+#   possum-<v>-linux-<arch>.tar.gz       x86_64 and aarch64, any distribution
+#   possum_<v>_<arch>.deb                Ubuntu, Debian (amd64, arm64)
+#   possum-<v>-1.<arch>.rpm              Fedora (x86_64, aarch64)
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- build
+
+  macos:
+    name: build macOS (${{ matrix.kind }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - { kind: apple-silicon, flag: --native, archs: arm64 }
+          - { kind: universal, flag: --universal, archs: arm64 x86_64 }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust targets for a universal app
+        if: matrix.kind == 'universal'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build Possum.app
+        run: ./bundle.sh ${{ matrix.flag }}
+      - name: Check the app
+        run: |
+          exe=dist/Possum.app/Contents/MacOS/possum
+          archs=$(lipo -archs "$exe" | tr ' ' '\n' | sort | xargs)
+          echo "architectures: $archs"
+          [ "$archs" = "${{ matrix.archs }}" ]
+          # Every slice is built for macOS 11 and later, as Info.plist says.
+          for arch in $archs; do
+            vtool -arch "$arch" -show-build "$exe" | grep -E "minos 11\.0$"
+          done
+          codesign --verify --deep --strict --verbose=2 dist/Possum.app
+      - name: Zip it
+        # ditto keeps the signature, permissions and symlinks, like Finder's
+        # Compress.
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          ditto -c -k --sequesterRsrc --keepParent dist/Possum.app \
+            "Possum-$version-macos-${{ matrix.kind }}.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: Possum-*-macos-${{ matrix.kind }}.zip
+          archive: false
+          if-no-files-found: error
+
+  windows:
+    name: build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build
+        run: cargo build --release
+      - name: Check it needs no Visual C++ runtime
+        # .cargo/config.toml links the C runtime statically; prove it.
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = & $dumpbin.FullName /nologo /dependents target\release\possum.exe
+          $deps
+          if ($deps -match 'VCRUNTIME|MSVCP|api-ms-win-crt') { throw "possum.exe needs the Visual C++ runtime" }
+      - name: Zip it
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          Compress-Archive -Path target\release\possum.exe, LICENSE, README.md `
+            -DestinationPath "possum-$version-windows-x86_64.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: possum-*-windows-x86_64.zip
+          archive: false
+          if-no-files-found: error
+
+  linux:
+    name: build Linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # The oldest C library of the supported distributions (glibc 2.41):
+    # programs built against it run on the newer ones too.
+    container: debian:13
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git gcc libc6-dev binutils file dpkg-dev rpm
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        run: packaging/linux/package.sh target/release/possum dist
+      - name: Check the packages
+        run: |
+          file target/release/possum
+          ls -l dist
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          rpm -qpi dist/*.rpm
+          rpm -qpl dist/*.rpm
+          echo "requires:"; rpm -qpR dist/*.rpm
+          tar -tzvf dist/*.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.tar.gz
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.deb
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.rpm
+          archive: false
+          if-no-files-found: error
+
+  # ------------------------------------- install and run on clean machines
+
+  macos-check:
+    name: run macOS ${{ matrix.kind }} on ${{ matrix.runner }}
+    needs: macos
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { kind: apple-silicon, runner: macos-latest }
+          - { kind: universal, runner: macos-latest }
+          # A real Intel Mac for the universal app's Intel half.
+          - { kind: universal, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: Possum-*-macos-${{ matrix.kind }}.zip
+          path: download
+          merge-multiple: true
+      - name: Unzip and check
+        run: |
+          sw_vers; uname -m
+          ditto -x -k download/*.zip app
+          codesign --verify --deep --strict --verbose=2 app/Possum.app
+          app/Possum.app/Contents/MacOS/possum --help | head -1
+          # On an Apple Silicon Mac, the universal app's Intel half too.
+          if [ "${{ matrix.kind }}" = universal ] && [ "$(uname -m)" = arm64 ]; then
+            arch -x86_64 app/Possum.app/Contents/MacOS/possum --help | head -1
+          fi
+          # What Gatekeeper says about a downloaded copy: not notarized, so
+          # the first launch needs System Settings > Privacy & Security >
+          # Open Anyway (see the guide). For the record only.
+          spctl --assess --type execute -vv app/Possum.app || true
+      - name: Run it and take screenshots
+        run: .github/scripts/macos-screenshots.sh app/Possum.app
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-macos-${{ matrix.kind }}-${{ matrix.runner }}
+          path: |
+            *.png
+            *.log
+
+  windows-check:
+    name: run Windows on ${{ matrix.runner }}
+    needs: windows
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows Server 2022 and 2025, and Windows 11 on Arm, which runs
+        # the x86_64 build through its built-in emulation.
+        runner: [windows-2022, windows-2025, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: possum-*-windows-x86_64.zip
+          path: download
+          merge-multiple: true
+      - name: Unzip
+        run: |
+          [Environment]::OSVersion.VersionString
+          $env:PROCESSOR_ARCHITECTURE
+          Expand-Archive -Path (Get-Item download\*.zip).FullName -DestinationPath app
+          Get-ChildItem app
+      - name: Run it and take screenshots
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .github\scripts\windows-screenshots.ps1 app\possum.exe
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-windows-${{ matrix.runner }}
+          path: |
+            *.png
+            *.log
+
+  linux-check:
+    name: install on ${{ matrix.distro }} (${{ matrix.arch }})
+    needs: linux
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        distro: [ubuntu-26.04, debian-13, fedora-45]
+        include:
+          - { arch: x86_64, debarch: amd64 }
+          - { arch: aarch64, debarch: arm64 }
+          - { distro: ubuntu-26.04, image: "ubuntu:26.04", family: debian }
+          - { distro: debian-13, image: "debian:13", family: debian }
+          - { distro: fedora-45, image: "fedora:45", family: fedora }
+    steps:
+      - name: Tools for the test
+        run: |
+          if [ "${{ matrix.family }}" = debian ]; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              ca-certificates git xvfb x11-xserver-utils imagemagick desktop-file-utils
+          else
+            dnf install -y git xorg-x11-server-Xvfb xsetroot ImageMagick desktop-file-utils
+          fi
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: possum*
+          path: download
+          merge-multiple: true
+      - name: Install the package
+        run: |
+          cat /etc/os-release | head -2; uname -m
+          if [ "${{ matrix.family }}" = debian ]; then
+            # apt resolves the dependencies, like a double-click in App Center.
+            DEBIAN_FRONTEND=noninteractive apt-get install -y ./download/possum_*_${{ matrix.debarch }}.deb
+          else
+            dnf install -y ./download/possum-*.${{ matrix.arch }}.rpm
+          fi
+      - name: Check the installed files
+        run: |
+          command -v possum
+          possum --help | head -1
+          desktop-file-validate /usr/share/applications/possum.desktop
+          ls /usr/share/icons/hicolor/*/apps/possum.png
+      - name: Run it and take screenshots
+        run: .github/scripts/linux-screenshots.sh possum
+      - name: The tarball works too
+        run: |
+          mkdir tarball
+          tar -xzf download/possum-*-linux-${{ matrix.arch }}.tar.gz -C tarball --strip-components=1
+          tarball/bin/possum --help | head -1
+      - name: Uninstall
+        run: |
+          if [ "${{ matrix.family }}" = debian ]; then apt-get remove -y possum; else dnf remove -y possum; fi
+          ! command -v possum
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-${{ matrix.distro }}-${{ matrix.arch }}
+          path: |
+            *.png
+            *.log
+
+  # ------------------------------------------------------- draft release
+
+  release:
+    name: draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos-check, windows-check, linux-check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "$GITHUB_REF_NAME" = "v$version" ] || {
+            echo "error: tag $GITHUB_REF_NAME but Cargo.toml says $version" >&2; exit 1; }
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: Possum-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: possum*
+          path: dist
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "Possum $GITHUB_REF_NAME" --generate-notes ./*

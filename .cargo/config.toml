@@ -1,0 +1,4 @@
+# Windows: link the C runtime into possum.exe, so it runs on a fresh Windows
+# install without the Visual C++ Redistributable.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

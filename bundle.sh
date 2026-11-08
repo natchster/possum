@@ -118,6 +118,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+cp LICENSE "$app/Contents/Resources/LICENSE"
+
 codesign --force --sign - "$app" >/dev/null 2>"$tmp/codesign.log" || {
     cat "$tmp/codesign.log" >&2
     echo "warning: ad-hoc codesign failed" >&2

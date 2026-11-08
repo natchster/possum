@@ -13,7 +13,25 @@ never asks for a status update, and always understands exactly how you feel.
 It puts a pixel-art possum on your screen that **runs along the screen
 edge** and **screams**, mouth wide open, lap after lap.
 
-## Run it
+## Download
+
+Ready-made builds come from the
+[Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml):
+open its latest run (sign in to GitHub) and pick yours under **Artifacts**.
+
+| System | File |
+|---|---|
+| macOS 11+, Apple Silicon | `Possum-…-macos-apple-silicon.zip` |
+| macOS 11+, Apple Silicon or Intel | `Possum-…-macos-universal.zip` |
+| Windows 10 / 11 | `possum-…-windows-x86_64.zip` |
+| Ubuntu, Debian | `possum_…_amd64.deb` or `_arm64.deb` |
+| Fedora | `possum-…x86_64.rpm` or `.aarch64.rpm` |
+| Any Linux | `possum-…-linux-x86_64.tar.gz` or `-aarch64.tar.gz` |
+
+They aren't signed by Apple or Microsoft, so the first start needs one extra
+click: see [Download](docs/GUIDE.md#download) in the guide.
+
+## Build it yourself
 
 Possum runs on **macOS**, **Windows** and **Linux**. You need
 [Rust](https://rustup.rs) (1.85 or newer), then:
@@ -45,8 +63,8 @@ To quit, click the possum head in the menu bar or tray and choose **Quit
 Possum**.
 
 **[Read the guide](docs/GUIDE.md)** for everything else: what it does in
-detail, step-by-step builds for each system, installing, the menu, options,
-how it works, the sound design, and the full sprite sheet.
+detail, downloading, step-by-step builds for each system, installing, the
+menu, options, how it works, the sound design, and the full sprite sheet.
 
 ## License
 
