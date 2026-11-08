@@ -3,7 +3,7 @@ name = "possum"
 version = "0.1.0"
 edition = "2021"
 description = "A screaming pixel-art possum that runs counterclockwise around the edge of your screen."
-license = "MIT"
+license-file = "LICENSE"
 
 [dependencies]
 block2 = "0.6"

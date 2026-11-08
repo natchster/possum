@@ -1,12 +1,17 @@
 # Possum
 
+**Possum is the perfect empathic digital companion for your stressful
+workday.** When the build breaks, the meeting runs over, and the inbox keeps
+filling up, a small pixel-art opossum runs laps around the edge of your
+screen and screams on your behalf, so you don't have to. It never judges,
+never asks for a status update, and always understands exactly how you feel.
+
 A native macOS app, written in Rust, that releases a pixel-art opossum onto
 your screen. It runs **counterclockwise around the edge of the screen** with
 its **mouth hanging open**, and every few seconds it **screams**: the jaw
 drops, yell marks shoot out of its mouth, it shakes, it speeds up, and you
-hear an explosive hiss, a shrill screech, a cartoon `AAAAAAAA!`, and a few
-breathy hisses. The hisses and the screech are synthesized, but they are
-modelled on spectrograms of real Virginia opossum recordings.
+hear it. It alternates between two sounds: a cartoon `AAAAAAAA!` and a long,
+open-mouthed hiss modelled on real Virginia opossum recordings.
 
 It is a tribute to the **«бежит орёт»** ("runs, screams") opossum meme: the
 screaming frames copy its thrown-back head and gaping, fang-filled jaws.
@@ -33,7 +38,7 @@ Click the little screaming possum head in the menu bar:
 | Item | What it does |
 |------|--------------|
 | **Scream** *(default)* | You hear the scream; no speech bubble |
-| **Scream silently** | No sound; an upright `AAAAAAAAH!` speech bubble instead |
+| **Scream silently** | No sound; an upright speech bubble instead (`AAAAAAAAH!` or `HSSSSSS!`) |
 | **Scream Now** | Makes it scream right away |
 | **Quit Possum** | Quits (Ctrl+C also works if you started it from a terminal) |
 
@@ -59,7 +64,7 @@ fast possum.
 | `src/main.rs`   | AppKit + Core Animation: the overlay window, the layers, the 60 Hz timer, the menu-bar item |
 | `src/sprite.rs` | The pixel art. Hand-drawn head grids plus procedurally drawn body, tail, and 8-frame gallop, with an automatic 1px outline |
 | `src/track.rs`  | The screen border as a rounded rectangle, walked counterclockwise |
-| `src/scream.rs` | Scream synthesis: Virginia opossum hiss and screech, the cartoon "AAAA" voice, breathing hisses; written out as WAV |
+| `src/scream.rs` | Sound synthesis: the cartoon "AAAA" voice and a Virginia opossum long hiss, written out as WAV |
 | `src/png.rs`    | A tiny PNG encoder for `--preview` and the app icon |
 
 * **One transparent window, moved by Core Animation.** A borderless,
@@ -92,23 +97,31 @@ frame), and the placement of the speech-bubble pointer.
 
 ## Sound design
 
-The scream is generated from scratch at startup, so the app ships no audio
-files. One scream has four parts:
+The sounds are generated from scratch at startup, so the app ships no audio
+files. The possum alternates between two of them: "AAAA", hiss, "AAAA",
+hiss...
 
-| Part | Modelled on | Synthesized as |
+| Sound | Modelled on | Synthesized as |
 |---|---|---|
-| **Explosive hiss** | Virginia opossum hisses: a broadband burst, +16 dB within 50 ms, centred near 4.5 kHz, darkening to ~2 kHz like the long open-mouthed hisses | White noise through broad filters, 12 ms attack, cross-faded from a bright to a dark colour as it fades |
-| **Screech** | A Virginia opossum screech: a shrill, nearly pure tone that jumps from ~1.6 to ~2.3 kHz in about 50 ms, then slides down to ~1.75 kHz | A sine with a little 2nd and 3rd harmonic, the same pitch slide (a touch higher and longer), and a slight wobble |
-| **"AAAA"** | Nothing real: the cartoon scream from the first version | A jittery sawtooth voice through "AAAA" vowel formants, unchanged (a test pins it, bit for bit, to the original) |
-| **Breathing hisses** | Virginia opossums hissing in short pulses, in time with their breathing | Two or three trailing hiss pulses |
+| **"AAAA"** | Nothing real: the cartoon scream from the first version | A jittery sawtooth voice through "AAAA" vowel formants, 1.1-1.7 s, unchanged (a test pins it, bit for bit, to the original) |
+| **Long hiss** | The long, open-mouthed hiss of a Virginia opossum: breath noise centred near 2 kHz, most of its energy at 1-3 kHz, little above 6 kHz | White noise through broad filters plus a low-pass, a 60 ms rise, a slowly drifting force, and a fade. Real hisses last ~0.6 s; this one lasts 1-1.6 s |
 
-Each part was tuned by measuring the synthesized sound against the
-recordings: spectral centroid, energy per frequency band, and pitch over
-time.
+The hiss was tuned by measuring it against the recordings. The real long
+hiss and the synthesized one both have a spectral centroid of about 2 kHz,
+with roughly 40-60% of their energy at 1-3 kHz and under 10% above 6 kHz.
 
 The reference recordings were used only for analysis and are not part of
-this repository. All are iNaturalist observations of the Virginia opossum
-(*Didelphis virginiana*):
+this repository. They are iNaturalist observations of the Virginia opossum
+(*Didelphis virginiana*) whose species was confirmed by the community:
+[40653183](https://www.inaturalist.org/observations/40653183) (the long hiss
+the model is based on), plus
+[112927147](https://www.inaturalist.org/observations/112927147),
+[163147267](https://www.inaturalist.org/observations/163147267) and
+[407756659](https://www.inaturalist.org/observations/407756659).
 
-- Hisses (species confirmed by the community): [112927147](https://www.inaturalist.org/observations/112927147), [163147267](https://www.inaturalist.org/observations/163147267), [40653183](https://www.inaturalist.org/observations/40653183), [407756659](https://www.inaturalist.org/observations/407756659)
-- Screech: [165184768](https://www.inaturalist.org/observations/165184768). This was the only clear screech recording found, and its species was not yet community-confirmed when it was used.
+## License
+
+[POSSUM LICENSE 1.0](LICENSE): the MIT license plus one condition. Anyone who
+uses or forks this repository must imitate a possum scream, out loud, at least
+once. An `AAAAAAAA!` or a long `HSSSSSSSS!` will do, and no witnesses are
+required.
