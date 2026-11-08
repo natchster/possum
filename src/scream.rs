@@ -383,27 +383,74 @@ mod tests {
         assert_eq!(peak(&s.wav_at_volume(0.0)), 0);
     }
 
+    fn aaaa_pcm() -> Vec<i16> {
+        aaaa_voice(7, 600.0, 0.5).iter().map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16).collect()
+    }
+
     #[test]
-    fn aaaa_voice_is_unchanged_from_the_first_version() {
-        // Golden value recorded from the v0.1 implementation (commit
-        // 91a751c), run on the same architecture: checksum of its 16-bit
-        // samples.
-        let pcm: Vec<i16> = aaaa_voice(7, 600.0, 0.5)
-            .iter()
-            .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-            .collect();
+    fn aaaa_voice_matches_the_first_version_on_every_platform() {
+        // Each OS's math library rounds the last bits of sin/exp/tanh a
+        // little differently, so allow a few steps out of 32,767 (rounding
+        // noise). Any real change to the voice moves samples by thousands.
+        let pcm = aaaa_pcm();
         assert_eq!(pcm.len(), 22_050);
-        let checksum = pcm.iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(v as u16 as u64));
+        let worst = pcm.iter().step_by(50).zip(AAAA_REFERENCE).map(|(&a, b)| (a as i32 - b as i32).abs()).max();
+        let worst = worst.unwrap_or(0);
+        assert!(worst <= 16, "the AAAA voice differs from the original by up to {worst}/32767");
+    }
+
+    /// Every 50th sample of the first version's "AAAA" (commit 91a751c) for
+    /// seed 7, 600 Hz, 0.5 s, recorded on an Apple Silicon Mac.
+    const AAAA_REFERENCE: [i16; 441] = [
+        0, 8, 255, -687, -88, 552, -596, -297, 805, 1720, -3757, -2489, 495, 6182,
+        -2399, -3021, -697, 1336, 12403, -7673, -1248, 5268, 4308, 15687, -1653, -26018, 1590, 3953,
+        -1966, 24106, -3013, -28110, 2651, 12993, 1252, 21513, 9295, -23700, -9831, 2977, 8105, 2112,
+        23370, 2746, -24739, -8322, 1360, 2386, -3854, 23169, 6817, -19987, -23289, 1963, 5906, 5565,
+        22361, 16636, -13156, -26847, 1515, 6957, 7028, -1947, 20354, 22127, -4774, -26545, -20905, 3299,
+        1616, 1078, -1584, 23745, 20201, -5303, -26468, -22510, 2100, 5426, 3134, 6137, 22640, 24601,
+        15201, -12741, -27621, -21248, 1163, 2144, 1967, 1647, 16588, 26449, 17076, -8975, -25299, -25039,
+        4168, -2568, -1246, 6995, 12521, 25587, 19699, -7270, -24862, -26808, 103, -840, 123, -2193,
+        3339, 23415, 24663, 13569, -17088, -26261, -26725, -12618, -684, 289, -3095, 3449, 6020, 13545,
+        20661, 28109, 26678, 27017, 22846, 20216, 17790, 10677, -355, -1574, -2689, -5203, -11531, -2034,
+        8094, 8438, 19331, 21810, 23638, 26233, 27942, 28796, 24661, 20920, 15236, 15860, 17701, 6105,
+        -3652, -23362, -29298, -28142, -27051, -25392, -11292, 11669, 24491, 27321, 28709, 23967, 18153, 13212,
+        8802, -2287, -9100, -18502, -28324, -28085, -27402, -26013, -23835, -21687, -15109, -445, 6401, 13850,
+        18413, 26554, 26417, 27129, 27968, 27774, 25592, 27069, 26500, 27142, 25930, 25927, 25246, 24846,
+        24379, 25369, 24182, 25277, 24015, 22145, 19239, 20483, 18553, 21331, 23383, 23500, 21879, 20414,
+        20831, 21779, 17135, 18715, 20560, 21070, 16314, 20628, 20824, 20127, 13537, 17638, 17891, 18205,
+        14262, 14930, 17059, 17981, 18910, 21878, 19830, 25420, 21263, 24221, 24068, 26659, 24191, 26298,
+        24889, 25344, 26114, 24242, 22854, 12596, 14160, 8039, 3508, 117, -8368, -12342, -11386, -14629,
+        -17806, -19911, -18396, -20023, -17032, -21130, -21703, -16602, -20574, -24106, -18898, -17216, -15197, -11451,
+        -6302, -2949, 7088, 16718, 19395, 22962, 25032, 26284, 22419, 20455, 13775, 11762, 6201, -191,
+        -2843, -23912, -27018, -25935, -22880, -14870, -68, 17219, 23993, 21944, 21099, 11178, 11899, 1008,
+        -2321, -12621, -24274, -24219, -21386, -21335, -19294, -9757, -2847, 1762, 9783, 12651, 14673, 18295,
+        18192, 19331, 16454, 15403, 16628, 14751, 13284, 9955, 5498, -170, -3807, -10130, -13814, -15274,
+        -17883, -10565, -953, -2354, -1811, 792, 269, 6095, 15836, 14335, 3753, -8908, -14058, -12847,
+        2084, -597, 632, 1316, 7289, 12656, 4489, -6612, -13998, 2367, 1619, 1956, -653, 7483,
+        6783, -2042, -13164, -187, 235, 2407, -1283, 6084, 2108, -8442, -4256, 1522, 3424, 599,
+        6788, 192, -8285, -548, 777, 2247, 3203, 3063, -4689, -1319, 567, 1330, 3196, 600,
+        -5023, 236, 1209, 978, 2837, -1936, -836, 805, 1898, 2641, 150, -3898, 323, 891,
+        -195, 1174, -2413, -790, 527, 244, 1657, -230, -2984, -323, 434, 103, 1508, -135,
+        -2561, 17, 558, 458, 1194, 56, -1251, -230, -42, 444, 299, 760, -264, -890,
+        25, 170, 131, 392, 172, -342, -176, 52, 37, 16, 132, -48, -167, -3,
+        33, 3, 25, -11, -2, 1, 0,
+    ];
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn aaaa_voice_is_bit_identical_to_the_first_version_on_macos() {
+        // On macOS, where the first version ran, it must match exactly:
+        // checksums of the v0.1 code's 16-bit output on each architecture.
+        let checksum = aaaa_pcm().iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(v as u16 as u64));
         assert_eq!(checksum, GOLDEN_AAAA_CHECKSUM);
     }
 
-    /// See `aaaa_voice_is_unchanged_from_the_first_version`. Apple's math
-    /// library rounds a few last bits of `sin`/`exp`/`tanh` differently on
-    /// Intel, so about 2% of samples differ by one step (1/32767) between
-    /// architectures. Each one is pinned to the v0.1 code's output on it.
-    #[cfg(target_arch = "aarch64")]
+    /// Apple's math library rounds a few last bits of `sin`/`exp`/`tanh`
+    /// differently on Intel, so about 2% of samples differ by one step
+    /// (1/32767) between the two Mac architectures.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     const GOLDEN_AAAA_CHECKSUM: u64 = 15_922_795_222_752_550_495;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     const GOLDEN_AAAA_CHECKSUM: u64 = 5_025_717_520_135_892_727;
 
     #[test]

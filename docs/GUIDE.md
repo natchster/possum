@@ -4,7 +4,9 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 
 - [What it does, in detail](#what-it-does-in-detail)
 - [Requirements](#requirements)
-- [Run it](#run-it)
+- [Build and run on macOS](#build-and-run-on-macos)
+- [Build and run on Windows](#build-and-run-on-windows)
+- [Build and run on Linux](#build-and-run-on-linux)
 - [Installing](#installing)
 - [The menu](#the-menu)
 - [Options](#options)
@@ -18,48 +20,54 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 ## What it does, in detail
 
 - The possum runs **counterclockwise** around the edge of your screen, mouth
-  hanging open. It runs over the menu bar and the Dock, and it shows up on
-  every Space, full-screen apps included.
+  hanging open. It runs over everything: the macOS menu bar and Dock, the
+  Windows taskbar, Linux panels and docks.
 - Every few seconds it **screams**: the jaw drops, it shakes, and it speeds
   up. It alternates between a cartoon `AAAAAAAA!` and a long hiss modelled on
   real Virginia opossum recordings (see [Sound design](#sound-design)).
-- From its menu-bar icon you can switch between **Scream** (with sound) and
-  **Scream silently** (a speech bubble instead), or make it **Scream Now**
-  (see [The menu](#the-menu)).
+- From its menu-bar or tray icon you can switch between **Scream** (with
+  sound) and **Scream silently** (a speech bubble instead), or make it
+  **Scream Now** (see [The menu](#the-menu)).
 - It ignores clicks and never steals focus, so it never gets in your way.
 - It keeps quiet while the screen is locked, the display is off, or the
   screensaver is running (see [Staying quiet](#staying-quiet)).
-- It always runs around your main display (the one with the menu bar), and
-  follows it when that changes (see [Multiple displays](#multiple-displays)).
+- It always runs around your main display, and follows it when that
+  changes (see [Multiple displays](#multiple-displays)).
 
 It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme.
 
 ## Requirements
 
-Possum is a **macOS-only** app. It is built directly on AppKit and Core
-Animation, Apple's own UI frameworks, so it does not build or run on Windows
-or Linux.
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work |
+| **Processor** | Apple Silicon or Intel (one universal app) | x86-64 | x86-64 |
+| **To build** | Rust 1.85+ and the Xcode Command Line Tools | Rust 1.85+ and the Visual Studio C++ Build Tools | Rust 1.85+ and `gcc` (as the linker) |
+| **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); a compositor for transparency (GNOME, KDE and most desktops have one); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
+| **Permissions** | None | None | None |
 
-| | |
-|---|---|
-| **macOS** | 11 Big Sur or later (the app bundle's minimum). Developed and tested on macOS 27 |
-| **Mac** | Apple Silicon or Intel. `bundle.sh` builds one universal app that runs natively on both. Tested on Apple Silicon, and the Intel build under Rosetta 2 (same test results, same pixels) |
-| **To build** | Rust 1.85 or newer, plus the Xcode Command Line Tools (`xcode-select --install`). They provide the linker, and the `codesign`, `iconutil` and `lipo` tools that `bundle.sh` uses. For a universal app, also both Rust targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin` |
-| **Permissions** | None. It doesn't need Accessibility, Screen Recording, or microphone access |
+Rust 1.85 is the oldest version Possum builds with. That's the version
+Debian 13 packages, so its own `cargo` works; elsewhere, use your
+distribution's Rust if it's new enough, or install it from
+[rustup.rs](https://rustup.rs).
 
-## Run it
+## Build and run on macOS
 
-```sh
-cargo run --release                    # straight from the terminal
-./bundle.sh && open dist/Possum.app    # or as a real .app bundle
-```
+1. Install the Xcode Command Line Tools: `xcode-select --install`.
+2. Install Rust from [rustup.rs](https://rustup.rs).
+3. Get the code and build the app:
 
-The possum starts at the bottom-left corner and screams right away. It
-appears on every Space (full-screen apps included), runs over the menu bar
-and the Dock, and ignores mouse clicks, so it never gets in your way.
+   ```sh
+   git clone https://github.com/natchster/possum
+   cd possum
+   ./bundle.sh && open dist/Possum.app
+   ```
+
+`cargo run --release` also works, straight from the terminal.
 
 `bundle.sh` builds a **universal** app (Apple Silicon + Intel) when both Rust
-targets are installed. Otherwise it builds for Apple Silicon Macs only
+targets are installed (`rustup target add aarch64-apple-darwin
+x86_64-apple-darwin`). Otherwise it builds for Apple Silicon Macs only
 (Intel only, if you build on an Intel Mac) and tells you how to add the
 missing target. You can also choose:
 
@@ -68,7 +76,65 @@ missing target. You can also choose:
 ./bundle.sh --native      # Apple Silicon only (Intel on an Intel Mac); fastest
 ```
 
+## Build and run on Windows
+
+1. Install Rust with `rustup-init.exe` from [rustup.rs](https://rustup.rs).
+   When it asks, let it install the **Visual Studio C++ Build Tools**: Rust
+   uses their linker.
+2. Get the code, with Git (`git clone https://github.com/natchster/possum`)
+   or GitHub's **Code → Download ZIP**, and open a terminal in it.
+3. Build it:
+
+   ```powershell
+   cargo build --release
+   ```
+
+4. Run `target\release\possum.exe`. Double-clicking it works: it's a normal
+   Windows app with no console window. Started from a terminal, it prints
+   there, so `target\release\possum.exe --verbose` shows its log.
+
+Windows scales the possum like everything else: at 150% display scaling it's
+1.5 times bigger, so it looks the same size as on a Mac.
+
+## Build and run on Linux
+
+1. Install Rust and a linker. With your distribution's packages:
+
+   ```sh
+   sudo apt install cargo gcc git      # Ubuntu, Debian
+   sudo dnf install cargo gcc git      # Fedora
+   ```
+
+   Or install Rust from [rustup.rs](https://rustup.rs) (you still need `gcc`).
+2. Get the code and build it:
+
+   ```sh
+   git clone https://github.com/natchster/possum
+   cd possum
+   cargo build --release
+   ./target/release/possum
+   ```
+
+No other libraries are needed to build: the X11 and D-Bus code is pure
+Rust.
+
+Good to know:
+
+- **Wayland:** Possum is an X11 app. On Wayland desktops it runs through
+  XWayland, which GNOME and KDE start automatically.
+- **The tray icon** uses the StatusNotifierItem standard. KDE shows it out
+  of the box; on GNOME it needs the AppIndicator extension, which Ubuntu
+  ships enabled. On Fedora or Debian with GNOME, install
+  `gnome-shell-extension-appindicator` and turn it on in Extensions.
+  Without a tray, quit with `pkill possum` (or Ctrl+C if you started it in a
+  terminal), and use `--silent` for silent mode.
+- **Sound** plays through `pw-play` (PipeWire), `paplay` (PulseAudio) or
+  `aplay` (ALSA), whichever is installed. If none is, Possum says so once
+  and screams silently.
+
 ## Installing
+
+**macOS**
 
 - **Keep it:** drag `dist/Possum.app` into `/Applications`.
 - **Finding it:** Possum has no Dock icon and doesn't appear in the
@@ -78,16 +144,42 @@ missing target. You can also choose:
   Possum.
 - **Copying it to another Mac:** a universal build runs on both Apple
   Silicon and Intel Macs. A `--native` build made on an Apple Silicon Mac
-  runs only on Apple Silicon Macs.
-  The app is signed ad hoc, without an Apple Developer ID or notarization,
-  so on another Mac, Gatekeeper blocks it the first time. Open it anyway
-  from System Settings → Privacy & Security → **Open Anyway** (on macOS 14
-  and earlier, Control-click → Open also works), or build it on that Mac
-  with `./bundle.sh`.
+  runs only on Apple Silicon Macs. The app is signed ad hoc, without an
+  Apple Developer ID or notarization, so on another Mac, Gatekeeper blocks it
+  the first time. Open it anyway from System Settings → Privacy & Security →
+  **Open Anyway** (on macOS 14 and earlier, Control-click → Open also works),
+  or build it on that Mac with `./bundle.sh`.
+
+**Windows**
+
+- **Keep it:** copy `target\release\possum.exe` anywhere, for example to
+  `%LOCALAPPDATA%\Programs\Possum`. It's a single file.
+- **Finding it:** it has no taskbar button; it lives in the notification
+  area (the tray), possibly behind the **^** overflow arrow.
+- **Start at login:** press Win+R, type `shell:startup`, and put a shortcut
+  to `possum.exe` in the folder that opens.
+- **Copying it to another PC:** an `.exe` you build yourself isn't signed, so
+  SmartScreen may warn about it the first time on another PC (**More info →
+  Run anyway**).
+
+**Linux**
+
+- **Keep it:** copy `target/release/possum` into `~/.local/bin` (or
+  `/usr/local/bin`).
+- **Start at login:** save this as `~/.config/autostart/possum.desktop`:
+
+  ```ini
+  [Desktop Entry]
+  Type=Application
+  Name=Possum
+  Exec=possum
+  X-GNOME-Autostart-enabled=true
+  ```
 
 ## The menu
 
-Click the little screaming possum head in the menu bar:
+Click the little screaming possum head: in the **menu bar** on macOS, in the
+**notification area** (tray) on Windows, and in the **tray** on Linux.
 
 | Item | What it does |
 |------|--------------|
@@ -99,8 +191,9 @@ Click the little screaming possum head in the menu bar:
 ## Options
 
 ```
---scale <N>        Size of one sprite pixel in points (default 3)
---speed <N>        Running speed in points per second (default 260)
+--scale <N>        Size of one sprite pixel (default 3): points on macOS,
+                   pixels at 100% display scaling on Windows, pixels on Linux
+--speed <N>        Running speed in the same units per second (default 260)
 --volume <0..1>    Scream volume (default 0.6)
 --silent           Start in "Scream silently" mode (bubble, no sound)
 -v, --verbose      Log screams, quiet times and display changes to the terminal
@@ -115,29 +208,46 @@ fast possum.
 
 ## How it works
 
-| File            | What's in it |
-|-----------------|--------------|
-| `src/main.rs`   | AppKit + Core Animation: the overlay window, the layers, the 60 Hz timer, the menu-bar item |
+| File | What's in it |
+|------|--------------|
+| `src/brain.rs` | Everything the possum *does*, on every OS: where it runs, when it screams, the AAAA/hiss rotation, quiet times, where the speech bubble goes |
+| `src/platform/macos.rs` | macOS: AppKit and Core Animation |
+| `src/platform/windows.rs` | Windows: Win32 layered windows, the tray icon, `PlaySound` |
+| `src/platform/linux.rs` | Linux: X11 windows, the tray icon, command-line audio players |
+| `src/render.rs` | Software drawing for Windows and Linux: scaling and rotating the sprites |
 | `src/sprite.rs` | The pixel art. Hand-drawn head grids plus procedurally drawn body, tail, and 8-frame gallop, with an automatic 1px outline |
-| `src/track.rs`  | The screen border as a rounded rectangle, walked counterclockwise |
+| `src/track.rs` | The screen border as a rounded rectangle, walked counterclockwise |
 | `src/scream.rs` | Sound synthesis: the cartoon "AAAA" voice and a Virginia opossum long hiss, written out as WAV |
-| `src/png.rs`    | A tiny PNG encoder for the sprite sheet and the app icon |
+| `src/quiet.rs`, `src/screens.rs` | When to keep quiet, and which display to run on |
+| `src/png.rs` | A tiny PNG encoder for the sprite sheet and the app icon |
 
-* **One transparent window, moved by Core Animation.** A borderless,
-  click-through window covers the primary screen at status-bar level. The
-  possum is a `CALayer` inside it whose *anchor point is at its paws*. Each
-  tick the layer moves along the track and rotates to the direction of
-  travel, so the paws always touch the screen edge. Counterclockwise is just
-  a heading angle that keeps increasing: 0° → 90° → 180° → 270°.
-* **Crisp pixels.** Frames are tiny native-resolution `CGImage`s (64×32)
-  scaled up with `kCAFilterNearest`, so they stay sharp on any display,
-  Retina or not.
-* **Readable screams.** The speech bubble is *not* a child of the rotating
-  possum layer. It is placed separately, always upright, ahead of the head
-  and toward the middle of the screen.
-* **No assets.** Every pixel and every scream is generated at startup. The
-  universal binary is under 1 MB. On an Apple Silicon Mac it uses about 1%
-  CPU.
+* **One brain, three bodies.** `brain.rs` has no operating-system code.
+  Each tick, the platform tells it the time, and it returns a scene: where
+  the paws are, which way the possum is heading, which frame to show, and
+  where the bubble goes. When it's time to scream, it asks the platform to
+  play a sound. So the possum behaves identically everywhere, and the
+  behaviour is tested once, on every OS.
+* **Paws on the edge.** The possum turns around its paws. Each tick it moves
+  along the track and rotates to the direction of travel, so the paws always
+  touch the screen edge. Counterclockwise is just a heading angle that keeps
+  increasing: 0° → 90° → 180° → 270°.
+* **macOS** draws with Core Animation: one transparent, click-through window
+  over the screen, and the possum is a layer in it. The GPU does the
+  rotating and moving.
+* **Windows and Linux** draw in software: two small, transparent,
+  click-through, always-on-top windows (the possum and its bubble) that move
+  along the edge. The possum is rotated in software only when its picture
+  changes (a new frame, or turning a corner); the rest of the time the window
+  just moves. On Windows they're layered windows (`UpdateLayeredWindow`); on
+  Linux, override-redirect X11 windows with a 32-bit (alpha) visual and an
+  empty input shape.
+* **Crisp pixels.** The sprites are tiny (64×32) and scaled up with
+  nearest-neighbour sampling, so they stay sharp on any display.
+* **Readable screams.** The speech bubble isn't rotated with the possum. It
+  is placed separately, always upright, ahead of the head and toward the
+  middle of the screen.
+* **No assets.** Every pixel and every scream is generated at startup. On an
+  Apple Silicon Mac it uses about 1% CPU.
 
 Nothing depends on a particular screen: the track is measured from the
 primary display at runtime, whatever its size or resolution. On MacBooks with
@@ -150,8 +260,8 @@ The possum never makes a sound while:
 - the screen is **locked**,
 - the **screensaver** is running,
 - the main **display is off** (asleep),
-- **another user** is using the screen (fast user switching), or
-- the Mac is **going to sleep**.
+- **another user** is using the screen (switching users), or
+- the computer is **going to sleep**.
 
 A scream that's playing when one of these starts is cut off at once. Screams
 that come due meanwhile are skipped silently, and the possum keeps running
@@ -160,62 +270,63 @@ scream again.
 
 It keeps track in two ways, so it can't miss a change:
 
-1. **Notifications, for an instant reaction.** macOS announces lock/unlock
-   and screensaver start/stop to every app (`com.apple.screenIsLocked`,
-   `com.apple.screensaver.didstart`, and their opposites), and `NSWorkspace`
-   announces displays sleeping and waking, session switches, and system
-   sleep. macOS normally holds these back from inactive apps, and a menu-bar
-   app is never active, so Possum asks for them to be delivered immediately.
-2. **A direct check, once a second and right before every scream.** It reads
-   the session's lock flag and whether this user owns the screen
-   (`CGSessionCopyCurrentDictionary`), whether the main display is asleep
-   (`CGDisplayIsAsleep`), and whether the screensaver app is running. That
+1. **Notifications, for an instant reaction**, where the system sends them.
+2. **A direct check, once a second and right before every scream.** That
    catches anything a notification missed, including states that were
    already true when Possum started.
 
-Run it with `--verbose` to watch this happen. Starting the screensaver for a
-few seconds looks like this (macOS also marks the session as locked while
-the screensaver runs, so both show up):
+| | Notifications | Direct check |
+|---|---|---|
+| **macOS** | Lock/unlock and screensaver start/stop (`com.apple.screenIsLocked`, `com.apple.screensaver.didstart`...), and `NSWorkspace`'s display sleep/wake, session switches and system sleep. macOS holds these back from inactive apps, and a menu-bar app is never active, so Possum asks for immediate delivery | The session's lock flag and whether this user owns the screen (`CGSessionCopyCurrentDictionary`), whether the main display is asleep (`CGDisplayIsAsleep`), and whether the screensaver is running |
+| **Windows** | Session lock/unlock and connect/disconnect (`WM_WTSSESSION_CHANGE`), display on/off (`GUID_CONSOLE_DISPLAY_STATE`), and system sleep/resume | Whether the screensaver is running (`SPI_GETSCREENSAVERRUNNING`), and whether the secure lock desktop is showing (`OpenInputDesktop` can't open it) |
+| **Linux** | None needed | On a background thread: systemd-logind's `LockedHint` and `Active` for the session (`loginctl`), the desktop's screensaver over D-Bus (`org.freedesktop.ScreenSaver` or GNOME's), and DPMS for the display |
+
+Run it with `--verbose` to watch this happen. Starting the screensaver on a
+Mac for a few seconds looks like this (macOS also marks the session as
+locked while the screensaver runs, so both show up):
 
 ```
 possum [    0.43s] AAAA: out loud
-possum [    2.98s] macOS says: ScreensaverStarted
+possum [    2.98s] the system says: ScreensaverStarted
 possum [    2.98s] keeping quiet: the screensaver is running
-possum [    3.05s] macOS says: ScreenLocked
+possum [    3.05s] the system says: ScreenLocked
 possum [    3.85s] hiss: no sound, because the screen is locked
 possum [    6.50s] AAAA: no sound, because the screen is locked
-possum [   14.21s] macOS says: ScreensaverStopped
-possum [   14.23s] macOS says: ScreenUnlocked
+possum [   14.21s] the system says: ScreensaverStopped
+possum [   14.23s] the system says: ScreenUnlocked
 possum [   14.23s] free to scream again
 possum [   15.79s] hiss: out loud
 ```
 
 ## Multiple displays
 
-The possum runs around the **primary display**: the one with the menu bar.
-Other displays are left alone, so it's always on the screen you look at
-most.
+The possum runs around the **primary display**: the one with the menu bar
+on macOS, the "main display" on Windows (Settings → System → Display), and
+the primary monitor on Linux (your desktop's display settings, or `xrandr
+--primary`). Other displays are left alone, so it's always on the screen
+you look at most.
 
 It moves when the primary display changes:
 
 | What happens | What the possum does |
 |---|---|
 | You change the main display's **resolution** | Keeps running on the new size |
-| You drag the **menu bar to another monitor** (System Settings → Displays → Arrange) | Moves to that monitor |
-| You **unplug** the main monitor | Moves to the display that takes over the menu bar |
+| You make **another monitor the main one** | Moves to that monitor |
+| You **unplug** the main monitor | Moves to the display that takes over |
 | You **plug in** a second monitor | Stays where it is, unless the new monitor becomes the main one |
-| macOS briefly reports **no display** while reconfiguring | Waits until a display is back |
+| The system briefly reports **no display** while reconfiguring | Waits until a display is back |
 
 When it moves, it keeps going from **the same spot on the same edge**: if it
 was halfway up the right edge, it continues halfway up the right edge of the
 new screen, even if the new screen has a completely different shape.
 
-It notices changes right away, from macOS's "screen parameters changed"
-notification, and also re-checks every second as a backup. That check looks
-at the primary display's frame *and* where the overlay window really is. The
-second part matters when the menu bar moves between two identical monitors:
-the primary frame looks exactly the same before and after, and only the
-window's position shows that it's on the wrong monitor.
+It notices changes right away (macOS's "screen parameters changed"
+notification, Windows' `WM_DISPLAYCHANGE`, X11's RandR screen-change
+events), and also re-checks every second as a backup. On macOS, that check
+looks at the primary display's frame *and* where the overlay window really
+is. The second part matters when the menu bar moves between two identical
+monitors: the primary frame looks exactly the same before and after, and
+only the window's position shows that it's on the wrong monitor.
 
 ## Sound design
 
@@ -225,7 +336,7 @@ hiss...
 
 | Sound | Modelled on | Synthesized as |
 |---|---|---|
-| **"AAAA"** | Nothing real: the cartoon scream from the first version | A jittery sawtooth voice through "AAAA" vowel formants, 1.1-1.7 s, unchanged (a test pins it, bit for bit, to the original) |
+| **"AAAA"** | Nothing real: the cartoon scream from the first version | A jittery sawtooth voice through "AAAA" vowel formants, 1.1-1.7 s, unchanged (a test pins it to the original) |
 | **Long hiss** | The long, open-mouthed hiss of a Virginia opossum: breath noise centred near 2 kHz, most of its energy at 1-3 kHz, little above 6 kHz | White noise through broad filters plus a low-pass, a 60 ms rise, a slowly drifting force, and a fade. Real hisses last ~0.6 s; this one lasts 1-1.6 s |
 
 The hiss was tuned by measuring it against the recordings. The real long
@@ -253,17 +364,22 @@ of the README with `cargo run -- --portrait possum.png`.
 ## Tests
 
 ```sh
-cargo test --target aarch64-apple-darwin    # Apple Silicon (needs an Apple Silicon Mac)
-cargo test --target x86_64-apple-darwin     # Intel (runs via Rosetta on an Apple Silicon Mac)
+cargo test
 ```
 
-The tests cover the counterclockwise track geometry and its continuity on
-screens of every shape; keeping the same edge after a screen change;
-following the primary display through every kind of display change; the
-quiet-time state machine (every lock, screensaver, display and sleep event,
-and the once-a-second check); the WAV and PNG encoders; the sprite frame
-invariants (paws on the ground in every frame); the speech-bubble pointer and
-font; the shape of the long hiss; and a golden checksum that keeps the "AAAA"
-voice identical to the original. That checksum differs per architecture:
-Apple's math library rounds a few last bits differently on Intel, so about 2%
-of samples differ by one step out of 32,767 (inaudible).
+The tests cover the possum's behaviour (it screams right away, alternates
+AAAA and hiss, keeps quiet while locked, cuts a scream off when the screen
+locks, shows a bubble only in silent mode and keeps it on screen); the
+counterclockwise track on screens of every shape and keeping the same edge
+after a screen change; following the primary display through every kind of
+display change; the quiet-time state machine; the software renderer (every
+rotation keeps the paws on the edge and nothing gets cut off); the WAV and
+PNG encoders; the sprite frames; and a reference that keeps the "AAAA" voice
+identical to the original.
+
+The [CI workflow](../.github/workflows/ci.yml) runs all of this on every
+push, on **macOS** (Apple Silicon, and Intel through Rosetta), **Windows**,
+**Ubuntu 26.04 LTS and 26.10**, **Fedora 45** and **Debian 13** (with
+Debian's own Rust 1.85). It also starts the real app on each of them (a
+virtual X server with a compositor on Linux) and keeps screenshots and logs
+as artifacts.

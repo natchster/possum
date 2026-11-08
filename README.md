@@ -15,18 +15,38 @@ edge** and **screams**, mouth wide open, lap after lap.
 
 ## Run it
 
-Possum is a **macOS app** (macOS 11 or later). With Rust and the Xcode
-Command Line Tools installed:
+Possum runs on **macOS**, **Windows** and **Linux**. You need
+[Rust](https://rustup.rs) (1.85 or newer), then:
+
+**macOS** 11 or later, with the Xcode Command Line Tools
+(`xcode-select --install`):
 
 ```sh
 ./bundle.sh && open dist/Possum.app
 ```
 
-To quit, click the possum head in the menu bar and choose **Quit Possum**.
+**Windows** 10 or 11, with the Visual Studio C++ Build Tools (the Rust
+installer offers them):
+
+```powershell
+cargo build --release
+target\release\possum.exe
+```
+
+**Linux** (tested on Ubuntu 26.04 and 26.10, Fedora 45, Debian 13), with
+`gcc` (`sudo apt install cargo gcc` or `sudo dnf install cargo gcc`):
+
+```sh
+cargo build --release
+./target/release/possum
+```
+
+To quit, click the possum head in the menu bar or tray and choose **Quit
+Possum**.
 
 **[Read the guide](docs/GUIDE.md)** for everything else: what it does in
-detail, requirements, installing, the menu, options, how it works, the sound
-design, and the full sprite sheet.
+detail, step-by-step builds for each system, installing, the menu, options,
+how it works, the sound design, and the full sprite sheet.
 
 ## License
 
