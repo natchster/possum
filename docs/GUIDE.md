@@ -37,7 +37,7 @@ or Linux.
 | | |
 |---|---|
 | **macOS** | 11 Big Sur or later (the app bundle's minimum). Developed and tested on macOS 27 |
-| **Mac** | Apple Silicon or Intel. Nothing in the code is architecture-specific, but only Apple Silicon has been tested |
+| **Mac** | Apple Silicon or Intel. Nothing in the code is architecture-specific, but only Apple Silicon has been tested. `bundle.sh` builds for the kind of Mac it runs on |
 | **To build** | Rust 1.85 or newer, plus the Xcode Command Line Tools (`xcode-select --install`). They provide the linker, and the `codesign` and `iconutil` tools that `bundle.sh` uses |
 | **Permissions** | None. It doesn't need Accessibility, Screen Recording, or microphone access |
 
@@ -60,12 +60,13 @@ and the Dock, and ignores mouse clicks, so it never gets in your way.
   possum head.
 - **Start at login:** System Settings → General → Login Items → **+** →
   Possum.
-- **Copying it to another Mac:** `bundle.sh` signs the app ad hoc, without an
-  Apple Developer ID or notarization. That's fine on the Mac that built it,
-  but on another Mac, Gatekeeper blocks it the first time. Open it anyway
-  from System Settings → Privacy & Security → **Open Anyway** (on macOS 14
-  and earlier, Control-click → Open also works), or build it there with
-  `./bundle.sh`.
+- **Copying it to another Mac:** the app only runs on the same kind of Mac
+  that built it: one built on Apple Silicon won't open on an Intel Mac, and
+  the other way round. It's also signed ad hoc, without an Apple Developer ID
+  or notarization, so on another Mac, Gatekeeper blocks it the first time.
+  Open it anyway from System Settings → Privacy & Security → **Open Anyway**
+  (on macOS 14 and earlier, Control-click → Open also works). Or simply build
+  it on that Mac with `./bundle.sh`.
 
 ## The menu
 
@@ -87,6 +88,7 @@ Click the little screaming possum head in the menu bar:
 --silent           Start in "Scream silently" mode (bubble, no sound)
 --start <0..1>     Where on the border to start, as a fraction of one lap
 --preview <FILE>   Write a PNG sprite sheet and exit
+--portrait <FILE>  Write a PNG of the screaming possum and exit
 --iconset <DIR>    Write a macOS .iconset folder and exit
 ```
 
@@ -151,7 +153,8 @@ the model is based on), plus
 
 The top two rows are the 8-frame run cycle, mouth hanging open. The next two
 are the scream cycle, head thrown back like the «бежит орёт» meme. Regenerate
-the sheet with `cargo run -- --preview sheet.png`.
+the sheet with `cargo run -- --preview sheet.png`, and the picture at the top
+of the README with `cargo run -- --portrait possum.png`.
 
 ## Tests
 

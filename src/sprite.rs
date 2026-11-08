@@ -130,8 +130,9 @@ const HEAD_SCREAM: [&str; 15] = [
 // Tiny 5px-tall font for the speech bubble.
 // ---------------------------------------------------------------------------
 
-fn glyph(ch: char) -> &'static [&'static str] {
-    match ch {
+/// The pixel-font glyph for `ch`, if the font has one.
+fn glyph(ch: char) -> Option<&'static [&'static str]> {
+    Some(match ch {
         'A' => &[".##.", "#..#", "####", "#..#", "#..#"],
         'E' => &["###", "#..", "##.", "#..", "###"],
         'H' => &["#..#", "#..#", "####", "#..#", "#..#"],
@@ -139,14 +140,21 @@ fn glyph(ch: char) -> &'static [&'static str] {
         'G' => &[".###", "#...", "#.##", "#..#", ".###"],
         'S' => &[".###", "#...", ".##.", "...#", "###."],
         '!' => &["#", "#", "#", ".", "#"],
-        _ => &[".", ".", ".", ".", "."],
-    }
+        _ => return None,
+    })
+}
+
+/// A one-pixel-wide space, drawn for characters the font doesn't have.
+const BLANK_GLYPH: &[&str] = &[".", ".", ".", ".", "."];
+
+fn glyph_or_blank(ch: char) -> &'static [&'static str] {
+    glyph(ch).unwrap_or(BLANK_GLYPH)
 }
 
 /// Whether `ch` has a real glyph (anything else renders as a blank).
 #[cfg(test)]
 pub fn has_glyph(ch: char) -> bool {
-    "AEHRGS!".contains(ch)
+    glyph(ch).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -225,12 +233,8 @@ impl Canvas {
         }
     }
 
-    /// Straight (non-premultiplied == premultiplied, alpha is 0 or 255) RGBA.
-    pub fn rgba(&self) -> Vec<u8> {
-        self.rgba_scaled(1)
-    }
-
-    /// Nearest-neighbour upscaled RGBA, for previews and icons.
+    /// Nearest-neighbour upscaled RGBA. Alpha is only ever 0 or 255, so it
+    /// is valid as both straight and premultiplied alpha.
     pub fn rgba_scaled(&self, s: usize) -> Vec<u8> {
         let (w, h) = (self.w as usize, self.h as usize);
         let mut out = vec![0u8; w * s * h * s * 4];
@@ -242,6 +246,17 @@ impl Canvas {
                     let i = (y * w * s + x) * 4;
                     out[i..i + 4].copy_from_slice(&[r, g, b, 255]);
                 }
+            }
+        }
+        out
+    }
+
+    /// Half-size copy that keeps every other pixel (for the 16px icon).
+    pub fn half(&self) -> Canvas {
+        let mut out = Canvas::new(self.w / 2, self.h / 2);
+        for y in 0..out.h {
+            for x in 0..out.w {
+                out.set(x, y, self.get(x * 2, y * 2));
             }
         }
         out
@@ -273,15 +288,17 @@ const GROUND: i32 = 29;
 /// edge: horizontally centred under the body, at the bottom of the outline.
 pub const FEET_X: f32 = 34.0;
 pub const FEET_Y: f32 = (GROUND + 2) as f32;
-/// Where the head is stamped; used to place the speech bubble and the
-/// "yell" lines next to the mouth.
+/// Where the heads are stamped. The screaming head is wider (its snout
+/// points up and forward), so it starts a pixel further left.
 const HEAD_X: i32 = 44;
-const SCREAM_HEAD_X: i32 = 43;
+const SCREAM_HEAD_X: i32 = HEAD_X - 1;
 const HEAD_Y: i32 = 4;
-/// Pixel just above-right of the head where the speech bubble points to.
-pub const BUBBLE_ANCHOR: (f32, f32) = (55.0, 3.0);
-/// Just in front of the open mouth.
-pub const MOUTH_ANCHOR: (f32, f32) = (62.0, 10.0);
+/// Just above the screaming head's raised snout: where the speech bubble
+/// points to.
+pub const BUBBLE_ANCHOR: (f32, f32) = ((SCREAM_HEAD_X + 12) as f32, (HEAD_Y - 1) as f32);
+/// Just in front of the screaming head's open mouth: where the yell lines
+/// start.
+pub const MOUTH_ANCHOR: (f32, f32) = ((SCREAM_HEAD_X + 19) as f32, (HEAD_Y + 6) as f32);
 
 pub const RUN_FRAMES: usize = 8;
 const STRIDE: f32 = 8.0;
@@ -478,7 +495,7 @@ impl Pointer {
 /// A speech bubble with pixel text and a pointer at the given corner. The
 /// text is never mirrored, so it reads correctly whichever way it points.
 pub fn bubble(text: &str, pointer: Pointer) -> Canvas {
-    let glyphs: Vec<&[&str]> = text.chars().map(glyph).collect();
+    let glyphs: Vec<&[&str]> = text.chars().map(glyph_or_blank).collect();
     let text_w: i32 = glyphs.iter().map(|g| g[0].len() as i32).sum::<i32>()
         + glyphs.len().saturating_sub(1) as i32;
     let pad = 3;
@@ -513,6 +530,25 @@ pub fn bubble(text: &str, pointer: Pointer) -> Canvas {
     }
     c.outline();
     c
+}
+
+/// The full screaming pose, as the app shows it in "Scream silently" mode:
+/// the screaming possum, its speech bubble saying `shout`, and its yell
+/// lines, with a 1px margin. Also returns where the possum's top-left
+/// corner sits inside the canvas.
+pub fn screaming_pose(shout: &str) -> (Canvas, (i32, i32)) {
+    let bubble = bubble(shout, Pointer::BottomLeft);
+    let yell = yell(1);
+    let (bx, by) = (BUBBLE_ANCHOR.0 as i32, BUBBLE_ANCHOR.1 as i32);
+    let (mx, my) = (MOUTH_ANCHOR.0 as i32, MOUTH_ANCHOR.1 as i32);
+    // The bubble's pointer tip is its bottom-left pixel, (1, h - 1).
+    let (ox, oy) = (1, bubble.h - by + 1);
+    let w = (ox + POSSUM_W).max(ox + bx - 1 + bubble.w).max(ox + mx + yell.w) + 1;
+    let mut c = Canvas::new(w, oy + POSSUM_H + 1);
+    c.blit(&possum_frame(0, true), ox, oy);
+    c.blit(&bubble, ox + bx - 1, oy + by - bubble.h);
+    c.blit(&yell, ox + mx, oy + my - yell.h / 2);
+    (c, (ox, oy))
 }
 
 /// Little white "sound" strokes radiating from the mouth: one rising, one
@@ -557,10 +593,7 @@ pub fn app_icon() -> Canvas {
             }
         }
     }
-    let mut head = Canvas::new(22, 17);
-    head.stamp(&HEAD_SCREAM, 1, 1);
-    head.outline();
-    c.blit(&head, 2, 11);
+    c.blit(&status_icon(), 2, 11);
     // A tiny "A!" shout in the corner.
     let mut shout = Canvas::new(12, 9);
     for y in 1..8 {
@@ -570,8 +603,8 @@ pub fn app_icon() -> Canvas {
             }
         }
     }
-    shout.stamp(glyph('A'), 3, 2);
-    shout.stamp(glyph('!'), 8, 2);
+    shout.stamp(glyph_or_blank('A'), 3, 2);
+    shout.stamp(glyph_or_blank('!'), 8, 2);
     shout.outline();
     c.blit(&shout, 18, 3);
     c
