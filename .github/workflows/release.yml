@@ -168,6 +168,8 @@ jobs:
           pattern: Possum-*-macos-${{ matrix.kind }}.zip
           path: download
           merge-multiple: true
+          # The file as uploaded, like a browser download: don't unpack zips.
+          skip-decompress: true
       - name: Unzip and check
         run: |
           sw_vers; uname -m
@@ -211,6 +213,8 @@ jobs:
           pattern: possum-*-windows-x86_64.zip
           path: download
           merge-multiple: true
+          # The file as uploaded, like a browser download: don't unpack zips.
+          skip-decompress: true
       - name: Unzip
         run: |
           [Environment]::OSVersion.VersionString
@@ -262,6 +266,8 @@ jobs:
           pattern: possum*
           path: download
           merge-multiple: true
+          # The file as uploaded, like a browser download: don't unpack zips.
+          skip-decompress: true
       - name: Install the package
         run: |
           cat /etc/os-release | head -2; uname -m
@@ -317,11 +323,15 @@ jobs:
           pattern: Possum-*
           path: dist
           merge-multiple: true
+          # The file as uploaded, like a browser download: don't unpack zips.
+          skip-decompress: true
       - uses: actions/download-artifact@v8
         with:
           pattern: possum*
           path: dist
           merge-multiple: true
+          # The file as uploaded, like a browser download: don't unpack zips.
+          skip-decompress: true
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
