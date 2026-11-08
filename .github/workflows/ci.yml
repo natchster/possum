@@ -1,0 +1,144 @@
+# Builds and tests Possum on macOS, Windows and the newest releases of the
+# three most popular Linux distributions, then runs the real app on a
+# (virtual) screen and keeps screenshots and logs as artifacts.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust targets for a universal app
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test (Apple Silicon)
+        run: cargo test --target aarch64-apple-darwin
+      - name: Test (Intel, via Rosetta)
+        run: cargo test --target x86_64-apple-darwin
+      - name: Build the universal app
+        run: |
+          ./bundle.sh
+          lipo -archs dist/Possum.app/Contents/MacOS/possum
+          codesign --verify --deep --strict dist/Possum.app
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Build
+        run: cargo build --release
+      - name: Run it and take screenshots
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          function Shot($name) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            # CaptureBlt includes layered (transparent) windows.
+            $op = [System.Drawing.CopyPixelOperation]::SourceCopy -bor [System.Drawing.CopyPixelOperation]::CaptureBlt
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size, $op)
+            $bmp.Save("$name.png")
+          }
+          foreach ($run in @(@{ name = "scream"; args = @("--start", "0.02") },
+                             @{ name = "silent"; args = @("--silent", "--start", "0.3") })) {
+            $all = @("--verbose", "--volume", "0") + $run.args
+            $p = Start-Process -FilePath target\release\possum.exe -ArgumentList $all `
+                   -RedirectStandardError "$($run.name).log" -PassThru
+            Start-Sleep -Seconds 3
+            Shot "$($run.name)-a"
+            Start-Sleep -Seconds 1
+            Shot "$($run.name)-b"
+            if ($p.HasExited) { Get-Content "$($run.name).log"; throw "possum exited with $($p.ExitCode)" }
+            Stop-Process -Id $p.Id
+            Get-Content "$($run.name).log"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows
+          path: |
+            *.png
+            *.log
+
+  linux:
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: "ubuntu:26.04", name: ubuntu-26.04, family: debian, rust: rustup }
+          - { image: "ubuntu:26.10", name: ubuntu-26.10, family: debian, rust: rustup }
+          - { image: "fedora:45", name: fedora-45, family: fedora, rust: rustup }
+          # Debian's own packaged Rust: proves the minimum (1.85) is enough.
+          - { image: "debian:13", name: debian-13, family: debian, rust: distro }
+    steps:
+      - name: Install packages (Debian, Ubuntu)
+        if: matrix.family == 'debian'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git gcc libc6-dev \
+            xvfb x11-xserver-utils xcompmgr imagemagick \
+            ${{ matrix.rust == 'distro' && 'cargo rustc rust-clippy' || '' }}
+      - name: Install packages (Fedora)
+        if: matrix.family == 'fedora'
+        run: |
+          dnf install -y --skip-unavailable \
+            ca-certificates curl git gcc glibc-devel \
+            xorg-x11-server-Xvfb xsetroot xcompmgr picom ImageMagick
+      - name: Install Rust (rustup)
+        if: matrix.rust == 'rustup'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v4
+      - name: Rust version
+        run: rustc --version && cargo --version
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Build
+        run: cargo build --release
+      - name: Run it on a virtual screen and take screenshots
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 +extension Composite +extension RANDR > xvfb.log 2>&1 &
+          export DISPLAY=:99
+          sleep 2
+          # A coloured desktop and a compositor, so transparency is visible.
+          xsetroot -solid '#5b8bd6' || true
+          (xcompmgr || picom --backend xrender) > compositor.log 2>&1 &
+          sleep 1
+          shot() { import -window root "$1.png" || magick import -window root "$1.png"; }
+          for run in "scream:--start 0.02" "silent:--silent --start 0.3"; do
+            name="${run%%:*}"; args="${run#*:}"
+            ./target/release/possum --verbose --volume 0 $args > "$name.log" 2>&1 &
+            pid=$!
+            sleep 3; shot "$name-a"; sleep 1; shot "$name-b"
+            if ! kill -0 "$pid"; then cat "$name.log"; echo "possum exited early"; exit 1; fi
+            kill "$pid"; wait "$pid" || true
+            cat "$name.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            *.png
+            *.log

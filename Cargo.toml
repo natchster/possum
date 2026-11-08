@@ -2,10 +2,15 @@
 name = "possum"
 version = "0.1.0"
 edition = "2021"
+# Debian 13 packages Rust 1.85; resolver 3 picks dependency versions that
+# build with it.
+rust-version = "1.85"
+resolver = "3"
 description = "A screaming pixel-art possum that runs counterclockwise around the edge of your screen."
 license-file = "LICENSE"
 
-[dependencies]
+# Each OS only pulls in what it needs.
+[target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
 objc2-foundation = "0.3"
@@ -13,6 +18,30 @@ objc2-app-kit = "0.3"
 objc2-quartz-core = "0.3"
 objc2-core-foundation = "0.3"
 objc2-core-graphics = "0.3"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Power",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.14", features = ["shape", "randr", "dpms"] }
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 [profile.release]
 lto = true

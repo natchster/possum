@@ -251,6 +251,18 @@ impl Canvas {
         out
     }
 
+    /// The colour of a pixel as RGBA; fully transparent for clear pixels and
+    /// anything outside the canvas.
+    pub fn rgba_at(&self, x: i32, y: i32) -> [u8; 4] {
+        match self.get(x, y) {
+            CLEAR => [0, 0, 0, 0],
+            c => {
+                let [r, g, b] = PALETTE[c as usize];
+                [r, g, b, 255]
+            }
+        }
+    }
+
     /// Half-size copy that keeps every other pixel (for the 16px icon).
     pub fn half(&self) -> Canvas {
         let mut out = Canvas::new(self.w / 2, self.h / 2);

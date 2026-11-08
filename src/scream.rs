@@ -192,6 +192,20 @@ pub struct Scream {
     pub seconds: f64,
 }
 
+impl Scream {
+    /// The WAV with its samples scaled to `volume` (0..1), for players that
+    /// can't set a volume themselves.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    pub fn wav_at_volume(&self, volume: f32) -> Vec<u8> {
+        let mut wav = self.wav.clone();
+        for sample in wav[44..].chunks_exact_mut(2) {
+            let v = i16::from_le_bytes([sample[0], sample[1]]) as f32 * volume.clamp(0.0, 1.0);
+            sample.copy_from_slice(&(v.round() as i16).to_le_bytes());
+        }
+        wav
+    }
+}
+
 /// The "AAAA" scream, `pitch` in Hz, `seconds` long.
 pub fn aaaa(seed: u32, pitch: f32, seconds: f32) -> Scream {
     let samples = aaaa_voice(seed, pitch, seconds);
@@ -353,6 +367,20 @@ mod tests {
             assert_eq!(s.wav.len(), 44 + data_len);
             assert_eq!(data_len, (SR * s.seconds as f32) as usize * 2);
         }
+    }
+
+    #[test]
+    fn volume_scales_the_samples_and_keeps_the_header() {
+        let s = hiss(3, 0.5);
+        let half = s.wav_at_volume(0.5);
+        assert_eq!(half.len(), s.wav.len());
+        assert_eq!(&half[..44], &s.wav[..44]);
+        let peak = |w: &[u8]| {
+            w[44..].chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap()
+        };
+        let (full, scaled) = (peak(&s.wav), peak(&half));
+        assert!((scaled as f32 - full as f32 * 0.5).abs() <= 1.0, "{full} -> {scaled}");
+        assert_eq!(peak(&s.wav_at_volume(0.0)), 0);
     }
 
     #[test]

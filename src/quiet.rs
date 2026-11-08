@@ -2,11 +2,11 @@
 //!
 //! Nobody wants a screaming possum while the screen is locked, the display
 //! is off, a screensaver is running, another user is logged in on the
-//! screen, or the Mac is going to sleep. This module is the pure state
-//! machine that tracks those conditions; `main.rs` feeds it from two
-//! sources:
+//! screen, or the computer is going to sleep. This module is the pure state
+//! machine that tracks those conditions; each platform (see
+//! `platform/`) feeds it from two sources:
 //!
-//! * **Events**: macOS notifications, so it reacts the moment the screen
+//! * **Events**: system notifications, so it reacts the moment the screen
 //!   locks or the screensaver starts.
 //! * **Probes**: a direct reading of the real system state every second, as
 //!   a safety net in case a notification is missed or the app starts while
@@ -29,13 +29,15 @@ impl Reason {
             Reason::Screensaver => "the screensaver is running",
             Reason::DisplayAsleep => "the display is off",
             Reason::UserSwitchedAway => "another user is using the screen",
-            Reason::SystemSleeping => "the Mac is going to sleep",
+            Reason::SystemSleeping => "the computer is going to sleep",
         }
     }
 }
 
-/// Something macOS told us about.
+/// Something the system told us about. (Not every platform reports every
+/// one: Windows has no screensaver events, Linux only probes.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum Event {
     ScreenLocked,
     ScreenUnlocked,
@@ -49,9 +51,10 @@ pub enum Event {
     SystemDidWake,
 }
 
-/// Notifications macOS broadcasts to every app through the distributed
-/// notification center. They aren't in any SDK header, but they have been
+/// macOS notifications that macOS broadcasts to every app through the
+/// distributed notification center. They aren't in any SDK header, but they have been
 /// stable for many macOS versions and are widely relied on.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const DISTRIBUTED_NOTIFICATIONS: [&str; 4] = [
     "com.apple.screenIsLocked",
     "com.apple.screenIsUnlocked",
@@ -60,6 +63,7 @@ pub const DISTRIBUTED_NOTIFICATIONS: [&str; 4] = [
 ];
 
 /// `NSWorkspace` notifications (their names are their own string values).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const WORKSPACE_NOTIFICATIONS: [&str; 6] = [
     "NSWorkspaceScreensDidSleepNotification",
     "NSWorkspaceScreensDidWakeNotification",
@@ -70,7 +74,8 @@ pub const WORKSPACE_NOTIFICATIONS: [&str; 6] = [
 ];
 
 impl Event {
-    /// The event a notification name stands for.
+    /// The event a macOS notification name stands for.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn from_notification(name: &str) -> Option<Event> {
         Some(match name {
             "com.apple.screenIsLocked" => Event::ScreenLocked,
@@ -88,14 +93,15 @@ impl Event {
     }
 }
 
-/// A direct reading of the system state.
+/// A direct reading of the system state. Each field is `None` when this
+/// platform can't tell; then what events said is kept.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Probe {
-    pub screen_locked: bool,
-    pub screensaver: bool,
-    pub display_asleep: bool,
+    pub screen_locked: Option<bool>,
+    pub screensaver: Option<bool>,
+    pub display_asleep: Option<bool>,
     /// False while another user's session owns the screen.
-    pub on_console: bool,
+    pub on_console: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -108,6 +114,7 @@ pub struct Quiet {
 }
 
 impl Quiet {
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::ScreenLocked => self.screen_locked = true,
@@ -128,10 +135,18 @@ impl Quiet {
     /// A probe reads the real state, so it wins for everything it can see.
     /// (System sleep can't be probed: the app is frozen while it lasts.)
     pub fn update(&mut self, probe: Probe) {
-        self.screen_locked = probe.screen_locked;
-        self.screensaver = probe.screensaver;
-        self.display_asleep = probe.display_asleep;
-        self.switched_away = !probe.on_console;
+        if let Some(locked) = probe.screen_locked {
+            self.screen_locked = locked;
+        }
+        if let Some(running) = probe.screensaver {
+            self.screensaver = running;
+        }
+        if let Some(asleep) = probe.display_asleep {
+            self.display_asleep = asleep;
+        }
+        if let Some(on_console) = probe.on_console {
+            self.switched_away = !on_console;
+        }
     }
 
     /// The reason to keep quiet, if there is one.
@@ -157,8 +172,12 @@ impl Quiet {
 mod tests {
     use super::*;
 
-    const AWAKE: Probe =
-        Probe { screen_locked: false, screensaver: false, display_asleep: false, on_console: true };
+    const AWAKE: Probe = Probe {
+        screen_locked: Some(false),
+        screensaver: Some(false),
+        display_asleep: Some(false),
+        on_console: Some(true),
+    };
 
     #[test]
     fn every_subscribed_notification_maps_to_an_event() {
@@ -229,21 +248,33 @@ mod tests {
     fn a_probe_catches_what_events_missed_and_corrects_stale_ones() {
         // App started while the screen was already locked: no event came.
         let mut q = Quiet::default();
-        q.update(Probe { screen_locked: true, ..AWAKE });
+        q.update(Probe { screen_locked: Some(true), ..AWAKE });
         assert_eq!(q.reason(), Some(Reason::ScreenLocked));
         // The unlock notification was missed, but the probe sees it.
         q.update(AWAKE);
         assert!(!q.is_quiet());
 
         for (probe, reason) in [
-            (Probe { screensaver: true, ..AWAKE }, Reason::Screensaver),
-            (Probe { display_asleep: true, ..AWAKE }, Reason::DisplayAsleep),
-            (Probe { on_console: false, ..AWAKE }, Reason::UserSwitchedAway),
+            (Probe { screensaver: Some(true), ..AWAKE }, Reason::Screensaver),
+            (Probe { display_asleep: Some(true), ..AWAKE }, Reason::DisplayAsleep),
+            (Probe { on_console: Some(false), ..AWAKE }, Reason::UserSwitchedAway),
         ] {
             let mut q = Quiet::default();
             q.update(probe);
             assert_eq!(q.reason(), Some(reason), "{probe:?}");
         }
+    }
+
+    #[test]
+    fn a_probe_that_cannot_see_something_keeps_what_events_said() {
+        // Windows can't ask whether the display is off, only hear about it.
+        let mut q = Quiet::default();
+        q.apply(Event::DisplaysSlept);
+        q.update(Probe { display_asleep: None, ..AWAKE });
+        assert_eq!(q.reason(), Some(Reason::DisplayAsleep));
+        // An empty probe changes nothing at all.
+        q.update(Probe::default());
+        assert_eq!(q.reason(), Some(Reason::DisplayAsleep));
     }
 
     #[test]

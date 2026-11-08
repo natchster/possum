@@ -1,29 +1,41 @@
 //! Which display the possum runs on, and when to move it.
 //!
-//! The possum runs around the *primary* display: the one with the menu bar,
-//! which macOS always lists first and places at the origin of the global
-//! coordinate space. It doesn't care about the others.
+//! The possum runs around the *primary* display: the one with the menu bar on
+//! macOS, the main display on Windows, the primary monitor on Linux. It
+//! doesn't care about the others.
 //!
 //! When displays change (a resolution change, a monitor plugged in or
-//! unplugged, or the menu bar dragged to another monitor in System
-//! Settings → Displays → Arrange), the overlay window has to follow the
-//! primary display. `main.rs` asks `follow` both when macOS posts a
-//! "screen parameters changed" notification and once a second as a backup.
+//! unplugged, or a different monitor made the main one), the overlay has to
+//! follow the primary display. Each platform asks `follow` both when the
+//! system says displays changed and once a second as a backup.
 
-use objc2_core_foundation::CGRect;
+/// A display or window frame, in the platform's own screen coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
 
-/// Where the overlay window should go, or `None` to leave it alone.
+impl Rect {
+    pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
+/// Where the overlay should go, or `None` to leave it alone.
 ///
-/// * `primary`: the primary display's frame now (`None` while macOS
+/// * `primary`: the primary display's frame now (`None` while the system
 ///   reports no display, e.g. mid-reconfiguration: then wait).
 /// * `current`: the frame the possum's track was built for.
 /// * `window`: where the overlay window actually is.
 ///
-/// Comparing `window` too matters: when the menu bar moves to another
-/// monitor of the same size, the new primary frame is identical to the old
-/// one (both start at the origin), but the window is still on the old
-/// monitor, whose global coordinates have changed.
-pub fn follow(primary: Option<CGRect>, current: CGRect, window: CGRect) -> Option<CGRect> {
+/// Comparing `window` too matters on macOS: when the menu bar moves to
+/// another monitor of the same size, the new primary frame is identical to
+/// the old one (both start at the origin), but the window is still on the
+/// old monitor, whose global coordinates have changed.
+pub fn follow(primary: Option<Rect>, current: Rect, window: Rect) -> Option<Rect> {
     let primary = primary?;
     (primary != current || window != primary).then_some(primary)
 }
@@ -31,10 +43,9 @@ pub fn follow(primary: Option<CGRect>, current: CGRect, window: CGRect) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use objc2_core_foundation::{CGPoint, CGSize};
 
-    fn frame(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    fn frame(x: f64, y: f64, w: f64, h: f64) -> Rect {
+        Rect::new(x, y, w, h)
     }
 
     const MACBOOK: (f64, f64) = (1512.0, 982.0);
@@ -84,6 +95,15 @@ mod tests {
         let monitor = frame(0.0, 0.0, 3440.0, 1440.0);
         let laptop = frame(0.0, 0.0, 1512.0, 982.0);
         assert_eq!(follow(Some(laptop), monitor, monitor), Some(laptop));
+    }
+
+    #[test]
+    fn primary_display_not_at_the_origin_is_followed_too() {
+        // On Windows and X11, the primary monitor can sit anywhere in the
+        // virtual desktop, e.g. to the right of a secondary one.
+        let left = frame(0.0, 0.0, 1920.0, 1080.0);
+        let right = frame(1920.0, 0.0, 2560.0, 1440.0);
+        assert_eq!(follow(Some(right), left, left), Some(right));
     }
 
     #[test]
