@@ -32,6 +32,30 @@ impl Image {
         Self { w, h, bgra }
     }
 
+    /// The opaque pixels as horizontal runs `(x, y, width)`, one row at a
+    /// time: the shape of a window that shows exactly this image (Linux
+    /// cuts its windows to this shape instead of blending alpha).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn opaque_runs(&self) -> Vec<(usize, usize, usize)> {
+        let mut runs = Vec::new();
+        for y in 0..self.h {
+            let row = &self.bgra[y * self.w * 4..(y + 1) * self.w * 4];
+            let mut x = 0;
+            while x < self.w {
+                if row[x * 4 + 3] == 0 {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                while x < self.w && row[x * 4 + 3] != 0 {
+                    x += 1;
+                }
+                runs.push((start, y, x - start));
+            }
+        }
+        runs
+    }
+
     /// Same image as ARGB32 in network byte order (for Linux tray icons).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn argb_be(&self) -> Vec<u8> {
@@ -230,6 +254,24 @@ mod tests {
                 let px = &img.bgra[(y * img.w + x) * 4..][..4];
                 assert_eq!(px, [expect[2], expect[1], expect[0], expect[3]]);
             }
+        }
+    }
+
+    #[test]
+    fn opaque_runs_cover_exactly_the_opaque_pixels() {
+        let art = Art::new();
+        let img = rotated(&art.scream[2][1], 3.0, 0.7, reach(&art, 3.0));
+        let runs = img.opaque_runs();
+        let mut covered = vec![false; img.w * img.h];
+        for &(x, y, w) in &runs {
+            assert!(w > 0);
+            for i in x..x + w {
+                assert!(!covered[y * img.w + i], "pixel covered twice");
+                covered[y * img.w + i] = true;
+            }
+        }
+        for (i, px) in img.bgra.chunks(4).enumerate() {
+            assert_eq!(covered[i], px[3] != 0, "pixel {i}");
         }
     }
 

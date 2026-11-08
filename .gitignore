@@ -3,3 +3,6 @@
 .DS_Store
 # Local reference image, not ours to redistribute
 opossumeme.webp
+
+# Local Linux VM for testing (QEMU): scripts, disk images, keys. Never tracked.
+/.vm/

@@ -1,11 +1,15 @@
 //! Linux: X11 (directly, or through XWayland on Wayland desktops).
 //!
-//! * Two small override-redirect windows with a 32-bit ARGB visual (the
-//!   possum and its speech bubble), drawn with the software renderer. They
-//!   are transparent wherever the compositor blends alpha (GNOME, KDE and
-//!   most desktops do), and an empty input shape makes them click-through.
-//!   Override-redirect windows aren't managed by the window manager, so they
-//!   can sit on top of everything, including panels and docks.
+//! * Two small override-redirect windows (the possum and its speech bubble),
+//!   drawn with the software renderer. The pixel art is either fully opaque
+//!   or fully transparent, so instead of alpha blending each window is *cut
+//!   to the shape* of its picture (the X11 Shape extension, as xeyes and
+//!   oneko do). That needs no compositor, and it avoids 32-bit alpha
+//!   windows, which crash Xwayland 24.1 (and with it GNOME Shell) when it
+//!   runs without GPU buffer sharing, as in virtual machines. An empty input
+//!   shape makes the windows click-through. Override-redirect windows aren't
+//!   managed by the window manager, so they sit on top of everything,
+//!   including panels and docks.
 //! * Sounds are written once to the user's runtime directory and played with
 //!   whichever player the system has: `pw-play` (PipeWire), `paplay`
 //!   (PulseAudio) or `aplay` (ALSA).
@@ -26,8 +30,8 @@ use x11rb::protocol::dpms::ConnectionExt as _;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::shape::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
-    AtomEnum, ClipOrdering, ColormapAlloc, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux,
-    EventMask, ImageFormat, PropMode, StackMode, VisualClass, Window, WindowClass,
+    AtomEnum, ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
+    ImageFormat, ImageOrder, PropMode, Rectangle, StackMode, Window, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -111,29 +115,23 @@ struct X11 {
 
 impl X11 {
     fn new(conn: RustConnection, screen_num: usize) -> Result<Self> {
-        let screen = &conn.setup().roots[screen_num];
+        let setup = conn.setup();
+        let screen = &setup.roots[screen_num];
         let root = screen.root;
-        // A 32-bit visual gives the windows an alpha channel.
-        let visual = screen
-            .allowed_depths
-            .iter()
-            .filter(|d| d.depth == 32)
-            .flat_map(|d| d.visuals.iter())
-            .find(|v| v.class == VisualClass::TRUE_COLOR)
-            .map(|v| v.visual_id)
-            .ok_or("this X server has no 32-bit (transparent) visual")?;
-        let colormap = conn.generate_id()?;
-        conn.create_colormap(ColormapAlloc::NONE, colormap, root, visual)?;
+        // Ordinary 24-bit windows: pixels go in as 32-bit little-endian BGRx,
+        // which is exactly our images minus the (unused) alpha byte.
+        let format_ok = setup.pixmap_formats.iter().any(|f| f.depth == 24 && f.bits_per_pixel == 32);
+        if screen.root_depth != 24 || !format_ok || setup.image_byte_order != ImageOrder::LSB_FIRST {
+            return Err(format!("unsupported display format (depth {})", screen.root_depth).into());
+        }
+        let (visual, depth) = (screen.root_visual, screen.root_depth);
 
         let make_window = |name: &str| -> Result<Window> {
             let win = conn.generate_id()?;
-            let aux = CreateWindowAux::new()
-                .background_pixel(0)
-                .border_pixel(0)
-                .colormap(colormap)
-                .override_redirect(1)
-                .event_mask(EventMask::EXPOSURE);
-            conn.create_window(32, win, root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, visual, &aux)?;
+            let aux = CreateWindowAux::new().override_redirect(1).event_mask(EventMask::EXPOSURE);
+            conn.create_window(depth, win, root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, visual, &aux)?;
+            // Invisible until there's a picture: an empty bounding shape.
+            conn.shape_rectangles(shape::SO::SET, shape::SK::BOUNDING, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
             // An empty input shape: clicks go straight through.
             conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
             conn.change_property(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, 8, name.len() as u32, name.as_bytes())?;
@@ -163,7 +161,8 @@ impl X11 {
         screens::Rect::new(0.0, 0.0, s.width_in_pixels as f64, s.height_in_pixels as f64)
     }
 
-    /// Draws an image into a window and moves it to `(x, y)`.
+    /// Draws an image into a window, cuts the window to the image's shape,
+    /// and moves it to `(x, y)`.
     fn show(&self, win: Window, img: &Image, x: i32, y: i32) -> Result<()> {
         self.conn.configure_window(win, &ConfigureWindowAux::new().x(x).y(y).width(img.w as u32).height(img.h as u32))?;
         let row = img.w * 4;
@@ -171,8 +170,14 @@ impl X11 {
         for (i, chunk) in img.bgra.chunks(row * rows_per_chunk).enumerate() {
             let rows = chunk.len() / row;
             let y0 = (i * rows_per_chunk) as i16;
-            self.conn.put_image(ImageFormat::Z_PIXMAP, win, self.gc, img.w as u16, rows as u16, 0, y0, 0, 32, chunk)?;
+            self.conn.put_image(ImageFormat::Z_PIXMAP, win, self.gc, img.w as u16, rows as u16, 0, y0, 0, 24, chunk)?;
         }
+        let shape: Vec<Rectangle> = img
+            .opaque_runs()
+            .into_iter()
+            .map(|(x, y, w)| Rectangle { x: x as i16, y: y as i16, width: w as u16, height: 1 })
+            .collect();
+        self.conn.shape_rectangles(shape::SO::SET, shape::SK::BOUNDING, ClipOrdering::YX_SORTED, win, 0, 0, &shape)?;
         Ok(())
     }
 
@@ -319,13 +324,35 @@ fn start_probe_thread(latest: Arc<Mutex<quiet::Probe>>) {
 /// whether it is the active one on its seat (it isn't after switching
 /// users).
 fn probe_session() -> quiet::Probe {
-    let session = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "auto".into());
+    let session = session_id();
     let out = Command::new("loginctl")
         .args(["show-session", &session, "-p", "LockedHint", "-p", "Active"])
         .stderr(Stdio::null())
         .output();
     let Some(out) = out.ok().filter(|o| o.status.success()) else { return quiet::Probe::default() };
     parse_loginctl(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Which logind session to ask about. Apps started from a terminal know it
+/// (`XDG_SESSION_ID`); apps the desktop starts (autostart, launchers) often
+/// run as systemd user services outside any session, so ask logind for the
+/// user's graphical ("display") session instead.
+fn session_id() -> String {
+    if let Some(id) = std::env::var("XDG_SESSION_ID").ok().filter(|id| !id.is_empty()) {
+        return id;
+    }
+    std::env::var("USER")
+        .ok()
+        .and_then(|user| {
+            let out = Command::new("loginctl")
+                .args(["show-user", &user, "-p", "Display", "--value"])
+                .stderr(Stdio::null())
+                .output()
+                .ok()?;
+            let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (out.status.success() && !id.is_empty()).then_some(id)
+        })
+        .unwrap_or_else(|| "auto".into())
 }
 
 /// Parses `loginctl show-session -p LockedHint -p Active` output.

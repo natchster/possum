@@ -111,14 +111,14 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl git gcc libc6-dev \
-            xvfb x11-xserver-utils xcompmgr imagemagick \
+            xvfb x11-xserver-utils imagemagick \
             ${{ matrix.rust == 'distro' && 'cargo rustc rust-clippy' || '' }}
       - name: Install packages (Fedora)
         if: matrix.family == 'fedora'
         run: |
           dnf install -y --skip-unavailable \
             ca-certificates curl git gcc glibc-devel \
-            xorg-x11-server-Xvfb xsetroot xcompmgr picom ImageMagick
+            xorg-x11-server-Xvfb xsetroot ImageMagick
       - name: Install Rust (rustup)
         if: matrix.rust == 'rustup'
         run: |
@@ -135,13 +135,12 @@ jobs:
         run: cargo build --release
       - name: Run it on a virtual screen and take screenshots
         run: |
-          Xvfb :99 -screen 0 1280x800x24 +extension Composite +extension RANDR > xvfb.log 2>&1 &
+          # A bare X server, no compositor: Possum cuts its windows to shape,
+          # so it needs none.
+          Xvfb :99 -screen 0 1280x800x24 +extension RANDR > xvfb.log 2>&1 &
           export DISPLAY=:99
           sleep 2
-          # A coloured desktop and a compositor, so transparency is visible.
           xsetroot -solid '#5b8bd6' || true
-          (xcompmgr || picom --backend xrender) > compositor.log 2>&1 &
-          sleep 1
           shot() { import -window root "$1.png" || magick import -window root "$1.png"; }
           for run in "scream:--start 0.02" "silent:--silent --start 0.3"; do
             name="${run%%:*}"; args="${run#*:}"

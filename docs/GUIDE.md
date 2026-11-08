@@ -43,7 +43,7 @@ It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme
 | **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work |
 | **Processor** | Apple Silicon or Intel (one universal app) | x86-64 | x86-64 |
 | **To build** | Rust 1.85+ and the Xcode Command Line Tools | Rust 1.85+ and the Visual Studio C++ Build Tools | Rust 1.85+ and `gcc` (as the linker) |
-| **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); a compositor for transparency (GNOME, KDE and most desktops have one); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
+| **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
 | **Permissions** | None | None | None |
 
 Rust 1.85 is the oldest version Possum builds with. That's the version
@@ -121,7 +121,10 @@ Rust.
 Good to know:
 
 - **Wayland:** Possum is an X11 app. On Wayland desktops it runs through
-  XWayland, which GNOME and KDE start automatically.
+  XWayland, which GNOME and KDE start automatically. It has been run on
+  Ubuntu 26.04's GNOME on Wayland (see [Tests](#tests)): it runs over the
+  top bar and the dock, its tray icon and menu work, and locking the screen
+  silences it.
 - **The tray icon** uses the StatusNotifierItem standard. KDE shows it out
   of the box; on GNOME it needs the AppIndicator extension, which Ubuntu
   ships enabled. On Fedora or Debian with GNOME, install
@@ -238,9 +241,17 @@ fast possum.
   click-through, always-on-top windows (the possum and its bubble) that move
   along the edge. The possum is rotated in software only when its picture
   changes (a new frame, or turning a corner); the rest of the time the window
-  just moves. On Windows they're layered windows (`UpdateLayeredWindow`); on
-  Linux, override-redirect X11 windows with a 32-bit (alpha) visual and an
-  empty input shape.
+  just moves. On Windows they're layered windows with per-pixel alpha
+  (`UpdateLayeredWindow`).
+* **On Linux, the windows are cut to shape.** The pixel art is either fully
+  opaque or fully transparent, so instead of alpha blending, each X11 window
+  is cut to the exact outline of its picture with the Shape extension, the
+  way `xeyes` and `oneko` do it. That needs no compositor. It also avoids
+  32-bit (alpha) windows altogether: on Ubuntu 26.04, showing one crashes
+  Xwayland 24.1, and GNOME Shell with it, whenever Xwayland runs without GPU
+  buffer sharing (as in virtual machines). An empty input shape makes the
+  windows click-through, and override-redirect keeps them above panels and
+  docks.
 * **Crisp pixels.** The sprites are tiny (64×32) and scaled up with
   nearest-neighbour sampling, so they stay sharp on any display.
 * **Readable screams.** The speech bubble isn't rotated with the possum. It
@@ -380,6 +391,30 @@ identical to the original.
 The [CI workflow](../.github/workflows/ci.yml) runs all of this on every
 push, on **macOS** (Apple Silicon, and Intel through Rosetta), **Windows**,
 **Ubuntu 26.04 LTS and 26.10**, **Fedora 45** and **Debian 13** (with
-Debian's own Rust 1.85). It also starts the real app on each of them (a
-virtual X server with a compositor on Linux) and keeps screenshots and logs
-as artifacts.
+Debian's own Rust 1.85). It also starts the real app on each of them (a bare
+virtual X server on Linux, without a compositor) and keeps screenshots and
+logs as artifacts.
+
+### Testing on a real Linux desktop in a VM
+
+CI's virtual X server isn't a real desktop, so Possum was also tested on
+**Ubuntu 26.04 with GNOME on Wayland**, in a QEMU virtual machine on a Mac
+(an ARM64 guest, accelerated with Apple's hypervisor). That's what found the
+Xwayland crash above. Run there, it was checked that:
+
+- it builds and its tests pass with Ubuntu's own `cargo`;
+- it runs counterclockwise over the top bar and the dock, cut cleanly to its
+  outline, and GNOME keeps running;
+- its tray icon appears in the top bar, and the menu's **Scream**, **Scream
+  silently**, **Scream Now** and **Quit Possum** work (clicked through
+  GNOME's D-Bus menu interface);
+- it plays sound through PipeWire's `pw-play`;
+- locking the session (`loginctl lock-session`, like Super+L) silences it,
+  and it screams again after unlocking.
+
+To set up your own: boot a cloud image of your distribution with
+`qemu-system-aarch64 -machine virt,accel=hvf` (or `accel=kvm` on Linux) and
+a `virtio-gpu-pci` display, install a desktop with cloud-init, and take
+screenshots from the host through QEMU's monitor (`screendump file.png -f
+png`), so no window opens on your own desktop. Keep that configuration out of
+the repository: `.gitignore` ignores a `.vm/` folder for it.
