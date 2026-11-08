@@ -1,0 +1,20 @@
+[package]
+name = "possum"
+version = "0.1.0"
+edition = "2021"
+description = "A screaming pixel-art possum that runs counterclockwise around the edge of your screen."
+license = "MIT"
+
+[dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-quartz-core = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
