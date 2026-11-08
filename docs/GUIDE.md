@@ -54,11 +54,13 @@ distribution's Rust if it's new enough, or install it from
 
 ## Download
 
-Every push to `main` runs the
+Released versions are on the
+[Releases](https://github.com/natchster/possum/releases) page. Between
+releases, every push to `main` runs the
 [Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml),
-which builds these files and keeps them for 90 days. Open its latest green
-run (you need to be signed in to GitHub) and download yours from
-**Artifacts**: each is the file itself, not wrapped in another zip.
+which builds the same files and keeps them for 90 days: open its latest
+green run (you need to be signed in to GitHub) and download yours from
+**Artifacts**. Each is the file itself, not wrapped in another zip.
 
 | File | For |
 |---|---|

@@ -15,9 +15,10 @@ edge** and **screams**, mouth wide open, lap after lap.
 
 ## Download
 
-Ready-made builds come from the
-[Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml):
-open its latest run (sign in to GitHub) and pick yours under **Artifacts**.
+Ready-made builds are on GitHub: under
+[Releases](https://github.com/natchster/possum/releases), and the newest
+from `main` as artifacts under
+[Actions](https://github.com/natchster/possum/actions) (sign in to download).
 
 | System | File |
 |---|---|
