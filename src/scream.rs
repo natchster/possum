@@ -358,7 +358,8 @@ mod tests {
     #[test]
     fn aaaa_voice_is_unchanged_from_the_first_version() {
         // Golden value recorded from the v0.1 implementation (commit
-        // 91a751c): checksum of its 16-bit samples.
+        // 91a751c), run on the same architecture: checksum of its 16-bit
+        // samples.
         let pcm: Vec<i16> = aaaa_voice(7, 600.0, 0.5)
             .iter()
             .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
@@ -368,8 +369,14 @@ mod tests {
         assert_eq!(checksum, GOLDEN_AAAA_CHECKSUM);
     }
 
-    /// See `aaaa_voice_is_unchanged_from_the_first_version`.
+    /// See `aaaa_voice_is_unchanged_from_the_first_version`. Apple's math
+    /// library rounds a few last bits of `sin`/`exp`/`tanh` differently on
+    /// Intel, so about 2% of samples differ by one step (1/32767) between
+    /// architectures. Each one is pinned to the v0.1 code's output on it.
+    #[cfg(target_arch = "aarch64")]
     const GOLDEN_AAAA_CHECKSUM: u64 = 15_922_795_222_752_550_495;
+    #[cfg(target_arch = "x86_64")]
+    const GOLDEN_AAAA_CHECKSUM: u64 = 5_025_717_520_135_892_727;
 
     #[test]
     fn hiss_is_long_and_steady_not_a_short_burst() {

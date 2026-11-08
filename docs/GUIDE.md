@@ -37,8 +37,8 @@ or Linux.
 | | |
 |---|---|
 | **macOS** | 11 Big Sur or later (the app bundle's minimum). Developed and tested on macOS 27 |
-| **Mac** | Apple Silicon or Intel. Nothing in the code is architecture-specific, but only Apple Silicon has been tested. `bundle.sh` builds for the kind of Mac it runs on |
-| **To build** | Rust 1.85 or newer, plus the Xcode Command Line Tools (`xcode-select --install`). They provide the linker, and the `codesign` and `iconutil` tools that `bundle.sh` uses |
+| **Mac** | Apple Silicon or Intel. `bundle.sh` builds one universal app that runs natively on both. Tested on Apple Silicon, and the Intel build under Rosetta 2 (same test results, same pixels) |
+| **To build** | Rust 1.85 or newer, plus the Xcode Command Line Tools (`xcode-select --install`). They provide the linker, and the `codesign`, `iconutil` and `lipo` tools that `bundle.sh` uses. For a universal app, also both Rust targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin` |
 | **Permissions** | None. It doesn't need Accessibility, Screen Recording, or microphone access |
 
 ## Run it
@@ -52,6 +52,15 @@ The possum starts at the bottom-left corner and screams right away. It
 appears on every Space (full-screen apps included), runs over the menu bar
 and the Dock, and ignores mouse clicks, so it never gets in your way.
 
+`bundle.sh` builds a **universal** app (Apple Silicon + Intel) when both Rust
+targets are installed. Otherwise it builds for your Mac only and tells you
+how to add the missing target. You can also choose:
+
+```sh
+./bundle.sh --universal   # Apple Silicon + Intel, or fail if a target is missing
+./bundle.sh --native      # just this Mac's architecture (fastest)
+```
+
 ## Installing
 
 - **Keep it:** drag `dist/Possum.app` into `/Applications`.
@@ -60,13 +69,13 @@ and the Dock, and ignores mouse clicks, so it never gets in your way.
   possum head.
 - **Start at login:** System Settings → General → Login Items → **+** →
   Possum.
-- **Copying it to another Mac:** the app only runs on the same kind of Mac
-  that built it: one built on Apple Silicon won't open on an Intel Mac, and
-  the other way round. It's also signed ad hoc, without an Apple Developer ID
-  or notarization, so on another Mac, Gatekeeper blocks it the first time.
-  Open it anyway from System Settings → Privacy & Security → **Open Anyway**
-  (on macOS 14 and earlier, Control-click → Open also works). Or simply build
-  it on that Mac with `./bundle.sh`.
+- **Copying it to another Mac:** a universal build runs on both Apple
+  Silicon and Intel Macs (a `--native` one only on the same kind of Mac).
+  The app is signed ad hoc, without an Apple Developer ID or notarization,
+  so on another Mac, Gatekeeper blocks it the first time. Open it anyway
+  from System Settings → Privacy & Security → **Open Anyway** (on macOS 14
+  and earlier, Control-click → Open also works), or build it on that Mac
+  with `./bundle.sh`.
 
 ## The menu
 
@@ -159,11 +168,14 @@ of the README with `cargo run -- --portrait possum.png`.
 ## Tests
 
 ```sh
-cargo test
+cargo test                                  # this Mac
+cargo test --target x86_64-apple-darwin     # the Intel build (via Rosetta on Apple Silicon)
 ```
 
 The tests cover the counterclockwise track geometry and its continuity, the
 WAV and PNG encoders, the sprite frame invariants (paws on the ground in every
 frame), the speech-bubble pointer placement and font, the shape of the long
 hiss, and a golden checksum that keeps the "AAAA" voice identical to the
-original.
+original. That checksum differs per architecture: Apple's math library rounds
+a few last bits differently on Intel, so about 2% of samples differ by one
+step out of 32,767 (inaudible).

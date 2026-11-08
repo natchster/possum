@@ -1,29 +1,92 @@
 #!/usr/bin/env bash
 # Builds dist/Possum.app: a proper macOS app bundle with a pixel-art icon,
-# no Dock icon (LSUIElement), ad-hoc signed so it launches on Apple Silicon.
-# The app is built for this Mac's architecture (Apple Silicon or Intel).
+# no Dock icon (LSUIElement), ad-hoc signed.
+#
+#   ./bundle.sh              Universal (Apple Silicon + Intel) when both Rust
+#                            targets are installed, otherwise this Mac only
+#   ./bundle.sh --universal  Universal, or fail if a Rust target is missing
+#   ./bundle.sh --native     This Mac's architecture only (fastest)
+#
+# Universal builds need both targets:
+#   rustup target add aarch64-apple-darwin x86_64-apple-darwin
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Ask cargo where it put the binary, so CARGO_TARGET_DIR, build.target-dir
-# and friends are respected.
-bin=$(cargo build --release --message-format=json-render-diagnostics \
-    | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)
-if [ -z "$bin" ]; then
-    echo "error: cargo did not report a built possum binary" >&2
+targets=(aarch64-apple-darwin x86_64-apple-darwin)
+
+mode=auto
+case "${1:-}" in
+    "") ;;
+    --universal) mode=universal ;;
+    --native) mode=native ;;
+    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: $0 [--universal | --native]" >&2; exit 2 ;;
+esac
+
+have_all_targets() {
+    command -v rustup >/dev/null || return 1
+    local installed
+    installed=$(rustup target list --installed)
+    for t in "${targets[@]}"; do
+        grep -qx "$t" <<<"$installed" || return 1
+    done
+}
+
+if [ "$mode" = auto ]; then
+    if have_all_targets; then
+        mode=universal
+    else
+        mode=native
+        echo "note: building for this Mac only. For an app that runs on both" >&2
+        echo "      Apple Silicon and Intel Macs: rustup target add ${targets[*]}" >&2
+    fi
+elif [ "$mode" = universal ] && ! have_all_targets; then
+    echo "error: a universal build needs both Rust targets:" >&2
+    echo "       rustup target add ${targets[*]}" >&2
     exit 1
 fi
+
+# The bundle says macOS 11+ (LSMinimumSystemVersion), so build for that too;
+# Rust's own default for Intel would be 10.12.
+export MACOSX_DEPLOYMENT_TARGET=11.0
+
+# Builds the release binary and prints where cargo put it, so
+# CARGO_TARGET_DIR, build.target-dir and friends are respected.
+build() {
+    local bin
+    bin=$(cargo build --release --message-format=json-render-diagnostics "$@" \
+        | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)
+    if [ -z "$bin" ]; then
+        echo "error: cargo did not report a built possum binary ($*)" >&2
+        return 1
+    fi
+    echo "$bin"
+}
 
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 app=dist/Possum.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin" "$app/Contents/MacOS/possum"
+exe="$app/Contents/MacOS/possum"
 
-# The icon is generated from the same pixel art as the sprite.
+# (Assign before use, so a failed build stops the script right there.)
+if [ "$mode" = universal ]; then
+    slices=()
+    for t in "${targets[@]}"; do
+        bin=$(build --target "$t")
+        slices+=("$bin")
+    done
+    lipo -create -output "$exe" "${slices[@]}"
+else
+    bin=$(build)
+    cp "$bin" "$exe"
+fi
+
+# The icon is generated from the same pixel art as the sprite. (macOS runs
+# the bundled binary's slice for this Mac.)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-"$bin" --iconset "$tmp/Possum.iconset" >/dev/null
+"$exe" --iconset "$tmp/Possum.iconset" >/dev/null
 iconutil -c icns "$tmp/Possum.iconset" -o "$app/Contents/Resources/Possum.icns"
 
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -46,6 +109,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign - "$app" >/dev/null || echo "warning: ad-hoc codesign failed (see above)" >&2
-echo "Built $app"
+codesign --force --sign - "$app" >/dev/null 2>"$tmp/codesign.log" || {
+    cat "$tmp/codesign.log" >&2
+    echo "warning: ad-hoc codesign failed" >&2
+}
+echo "Built $app ($(lipo -archs "$exe"))"
 echo "Run it with:  open $app"
