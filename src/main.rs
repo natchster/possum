@@ -41,7 +41,7 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSData, NSObject, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer};
 use objc2_quartz_core::{kCAFilterNearest, kCAGravityResize, CALayer, CATransaction};
 
-use scream::Rng;
+use scream::{Kind, Rng};
 use sprite::Canvas;
 use track::Track;
 
@@ -56,15 +56,17 @@ static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
 const TAG_SCREAM: isize = 0;
 const TAG_SCREAM_SILENTLY: isize = 1;
 
-const SHOUTS: [&str; 7] = [
-    "AAAAAA!",
-    "AAAAAAAAH!",
-    "AAAA!!",
-    "EEEEEEE!",
-    "AAARGH!",
-    "AAAAAAAAAAA!",
-    "HAAAA!",
-];
+/// What the speech bubble says in "Scream silently" mode, per kind of scream.
+const AAAA_SHOUTS: [&str; 6] = ["AAAAAA!", "AAAAAAAAH!", "AAAA!!", "AAARGH!", "AAAAAAAAAAA!", "HAAAA!"];
+const HISS_SHOUTS: [&str; 3] = ["HSSSSS!", "HSSSSSSSS!", "SSSSSSS!"];
+
+/// Index of a scream kind into the per-kind sound and bubble tables.
+fn kind_index(kind: Kind) -> usize {
+    match kind {
+        Kind::Aaaa => 0,
+        Kind::Hiss => 1,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Command line
@@ -236,9 +238,11 @@ struct Possum {
     run_frames: Vec<CFRetained<CGImage>>,
     scream_frames: Vec<CFRetained<CGImage>>,
     yell_frames: Vec<CFRetained<CGImage>>,
-    /// One bubble per shout, in each of the four pointer orientations.
-    bubbles: Vec<[Bubble; 4]>,
-    sounds: Vec<(Retained<NSSound>, f64)>,
+    /// Per kind of scream: one bubble per shout, in each of the four
+    /// pointer orientations.
+    bubbles: [Vec<[Bubble; 4]>; 2],
+    /// Per kind of scream: a few pre-synthesised variations.
+    sounds: [Vec<(Retained<NSSound>, f64)>; 2],
 
     scale: f64,
     speed: f64,
@@ -252,8 +256,11 @@ struct Possum {
     scream_until: f64,
     next_scream: f64,
     shown: Option<(bool, usize)>,
+    /// The possum alternates: "AAAA", hiss, "AAAA", hiss...
+    next_kind: Kind,
+    kind: Kind,
     shout: usize,
-    bubble_shown: Option<(usize, usize)>,
+    bubble_shown: Option<(Kind, usize, usize)>,
     rng: Rng,
 }
 
@@ -271,34 +278,42 @@ impl Possum {
         let run_frames = art.run.iter().map(|c| cg_image(c, 1)).collect();
         let scream_frames = art.scream.iter().map(|c| cg_image(c, 1)).collect();
         let yell_frames = (0..2).map(|f| cg_image(&sprite::yell(f), 1)).collect();
-        let bubbles = SHOUTS
-            .iter()
-            .map(|text| {
-                sprite::Pointer::ALL.map(|pointer| {
-                    let c = sprite::bubble(text, pointer);
-                    Bubble {
-                        image: cg_image(&c, 1),
-                        w: c.w as f64,
-                        h: c.h as f64,
-                        tip: pointer.tip(c.w),
-                    }
+        let bubble_set = |texts: &[&str]| -> Vec<[Bubble; 4]> {
+            texts
+                .iter()
+                .map(|text| {
+                    sprite::Pointer::ALL.map(|pointer| {
+                        let c = sprite::bubble(text, pointer);
+                        Bubble {
+                            image: cg_image(&c, 1),
+                            w: c.w as f64,
+                            h: c.h as f64,
+                            tip: pointer.tip(c.w),
+                        }
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
+        let bubbles = [bubble_set(&AAAA_SHOUTS), bubble_set(&HISS_SHOUTS)];
 
         // --- sound ---------------------------------------------------------
-        let sounds = (0..4)
-            .map(|i| {
-                // Pitch and length of the "AAAA" part, as in the first version.
-                let pitch = rng.range(560.0, 760.0);
-                let seconds = rng.range(1.1, 1.7);
-                let s = scream::synthesize(seed.wrapping_add(i * 7919), pitch, seconds);
-                let sound = NSSound::initWithData(NSSound::alloc(), &NSData::with_bytes(&s.wav))
-                    .expect("NSSound could not decode the synthesised WAV");
-                sound.setVolume(opts.volume);
-                (sound, s.seconds)
-            })
-            .collect();
+        let load = |s: scream::Scream| {
+            let sound = NSSound::initWithData(NSSound::alloc(), &NSData::with_bytes(&s.wav))
+                .expect("NSSound could not decode the synthesised WAV");
+            sound.setVolume(opts.volume);
+            (sound, s.seconds)
+        };
+        let mut aaaas = Vec::new();
+        let mut hisses = Vec::new();
+        for i in 0..3u32 {
+            // Pitch and length of the "AAAA", as in the first version.
+            let pitch = rng.range(560.0, 760.0);
+            let seconds = rng.range(1.1, 1.7);
+            aaaas.push(load(scream::aaaa(seed.wrapping_add(i * 7919), pitch, seconds)));
+            let seconds = rng.range(1.0, 1.6);
+            hisses.push(load(scream::hiss(seed.wrapping_add(104_729 + i * 7919), seconds)));
+        }
+        let sounds = [aaaas, hisses];
 
         // --- window: transparent, borderless, click-through overlay --------
         let screen = primary_screen_frame(mtm);
@@ -386,6 +401,9 @@ impl Possum {
             // It screams right away.
             next_scream: 0.25,
             shown: None,
+            // It opens with an "AAAA".
+            next_kind: Kind::Aaaa,
+            kind: Kind::Aaaa,
             shout: 0,
             bubble_shown: None,
             rng,
@@ -412,8 +430,14 @@ impl Possum {
     }
 
     fn start_scream(&mut self, now: f64) {
-        let pick = self.rng.next_u32() as usize % self.sounds.len();
-        let (sound, seconds) = &self.sounds[pick];
+        self.kind = self.next_kind;
+        self.next_kind = match self.kind {
+            Kind::Aaaa => Kind::Hiss,
+            Kind::Hiss => Kind::Aaaa,
+        };
+        let k = kind_index(self.kind);
+        let pick = self.rng.next_u32() as usize % self.sounds[k].len();
+        let (sound, seconds) = &self.sounds[k][pick];
         if !SILENT.load(Ordering::Relaxed) {
             sound.stop();
             if !sound.play() {
@@ -424,7 +448,7 @@ impl Possum {
         // Catch its breath, then scream again.
         self.next_scream = self.scream_until + self.rng.range(1.0, 3.0) as f64;
 
-        self.shout = self.rng.next_u32() as usize % self.bubbles.len();
+        self.shout = self.rng.next_u32() as usize % self.bubbles[k].len();
     }
 
     /// Converts a point on the sprite (in sprite pixels from its top-left)
@@ -444,7 +468,7 @@ impl Possum {
         // 2 = top edge (←), 3 = left edge (↓). Same order as Pointer::ALL.
         let quadrant = ((heading / std::f64::consts::FRAC_PI_2 + 0.5).floor() as i64)
             .rem_euclid(4) as usize;
-        let b = &self.bubbles[self.shout][quadrant];
+        let b = &self.bubbles[kind_index(self.kind)][self.shout][quadrant];
         let (w, h) = (b.w * self.scale, b.h * self.scale);
         let (tx, ty) = self.sprite_to_window(paws, heading, sprite::BUBBLE_ANCHOR);
         // Keep the whole bubble on screen, even right next to a corner.
@@ -453,8 +477,8 @@ impl Possum {
         let left = (tx - b.tip.0 * w).clamp(0.0, (sw - w).max(0.0));
         let bottom = (ty - b.tip.1 * h).clamp(0.0, (sh - h).max(0.0));
 
-        if self.bubble_shown != Some((self.shout, quadrant)) {
-            self.bubble_shown = Some((self.shout, quadrant));
+        if self.bubble_shown != Some((self.kind, self.shout, quadrant)) {
+            self.bubble_shown = Some((self.kind, self.shout, quadrant));
             self.bubble.setBounds(size(w, h));
             self.bubble.setAnchorPoint(CGPoint::new(0.0, 0.0));
             unsafe { self.bubble.setContents(Some(as_object(&b.image))) };
@@ -482,7 +506,7 @@ impl Possum {
         let silent = SILENT.load(Ordering::Relaxed);
         if silent {
             // Switched to "Scream silently" mid-scream: hush at once.
-            for (sound, _) in &self.sounds {
+            for (sound, _) in self.sounds.iter().flatten() {
                 if sound.isPlaying() {
                     sound.stop();
                 }
@@ -663,7 +687,7 @@ fn write_png(path: &std::path::Path, c: &Canvas, scale: usize, bg: Option<[u8; 3
 fn write_preview(path: &str) {
     let art = sprite::possum();
     let (cw, ch) = (sprite::POSSUM_W + 4, sprite::POSSUM_H + 4);
-    let bubble = sprite::bubble(SHOUTS[0], sprite::Pointer::BottomLeft);
+    let bubble = sprite::bubble(AAAA_SHOUTS[0], sprite::Pointer::BottomLeft);
     let composed_h = sprite::POSSUM_H + bubble.h;
     let mut sheet = Canvas::new(cw * 4, ch * 4 + composed_h + 4);
     for (i, frame) in art.run.iter().chain(art.scream.iter()).enumerate() {
@@ -750,4 +774,18 @@ fn main() {
     }
 
     app.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_shout_can_be_drawn_in_the_pixel_font() {
+        for text in AAAA_SHOUTS.iter().chain(HISS_SHOUTS.iter()) {
+            for ch in text.chars() {
+                assert!(sprite::has_glyph(ch), "no glyph for {ch:?} in {text:?}");
+            }
+        }
+    }
 }
