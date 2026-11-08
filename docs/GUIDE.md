@@ -1,0 +1,150 @@
+# Possum guide
+
+Everything about Possum beyond [what it does](../README.md).
+
+- [Requirements](#requirements)
+- [Run it](#run-it)
+- [Installing](#installing)
+- [The menu](#the-menu)
+- [Options](#options)
+- [How it works](#how-it-works)
+- [Sound design](#sound-design)
+- [Sprite sheet](#sprite-sheet)
+- [Tests](#tests)
+
+## Requirements
+
+Possum is a **macOS-only** app. It is built directly on AppKit and Core
+Animation, Apple's own UI frameworks, so it does not build or run on Windows
+or Linux.
+
+| | |
+|---|---|
+| **macOS** | 11 Big Sur or later (the app bundle's minimum). Developed and tested on macOS 27 |
+| **Mac** | Apple Silicon or Intel. Nothing in the code is architecture-specific, but only Apple Silicon has been tested |
+| **To build** | Rust 1.85 or newer, plus the Xcode Command Line Tools (`xcode-select --install`). They provide the linker, and the `codesign` and `iconutil` tools that `bundle.sh` uses |
+| **Permissions** | None. It doesn't need Accessibility, Screen Recording, or microphone access |
+
+## Run it
+
+```sh
+cargo run --release                    # straight from the terminal
+./bundle.sh && open dist/Possum.app    # or as a real .app bundle
+```
+
+The possum starts at the bottom-left corner and screams right away. It
+appears on every Space (full-screen apps included), runs over the menu bar
+and the Dock, and ignores mouse clicks, so it never gets in your way.
+
+## Installing
+
+- **Keep it:** drag `dist/Possum.app` into `/Applications`.
+- **Finding it:** Possum has no Dock icon and doesn't appear in the
+  Command-Tab switcher. It lives in the menu bar, as a little screaming
+  possum head.
+- **Start at login:** System Settings → General → Login Items → **+** →
+  Possum.
+- **Copying it to another Mac:** `bundle.sh` signs the app ad hoc, without an
+  Apple Developer ID or notarization. That's fine on the Mac that built it,
+  but on another Mac, Gatekeeper blocks it the first time. Open it anyway
+  from System Settings → Privacy & Security → **Open Anyway** (on macOS 14
+  and earlier, Control-click → Open also works), or build it there with
+  `./bundle.sh`.
+
+## The menu
+
+Click the little screaming possum head in the menu bar:
+
+| Item | What it does |
+|------|--------------|
+| **Scream** *(default)* | You hear the scream; no speech bubble |
+| **Scream silently** | No sound; an upright speech bubble instead (`AAAAAAAAH!` or `HSSSSSS!`) |
+| **Scream Now** | Makes it scream right away |
+| **Quit Possum** | Quits (Ctrl+C also works if you started it from a terminal) |
+
+## Options
+
+```
+--scale <N>        Size of one sprite pixel in points (default 3)
+--speed <N>        Running speed in points per second (default 260)
+--volume <0..1>    Scream volume (default 0.6)
+--silent           Start in "Scream silently" mode (bubble, no sound)
+--start <0..1>     Where on the border to start, as a fraction of one lap
+--preview <FILE>   Write a PNG sprite sheet and exit
+--iconset <DIR>    Write a macOS .iconset folder and exit
+```
+
+For example, `cargo run --release -- --scale 4 --speed 400` gives you a big,
+fast possum.
+
+## How it works
+
+| File            | What's in it |
+|-----------------|--------------|
+| `src/main.rs`   | AppKit + Core Animation: the overlay window, the layers, the 60 Hz timer, the menu-bar item |
+| `src/sprite.rs` | The pixel art. Hand-drawn head grids plus procedurally drawn body, tail, and 8-frame gallop, with an automatic 1px outline |
+| `src/track.rs`  | The screen border as a rounded rectangle, walked counterclockwise |
+| `src/scream.rs` | Sound synthesis: the cartoon "AAAA" voice and a Virginia opossum long hiss, written out as WAV |
+| `src/png.rs`    | A tiny PNG encoder for the sprite sheet and the app icon |
+
+* **One transparent window, moved by Core Animation.** A borderless,
+  click-through window covers the primary screen at status-bar level. The
+  possum is a `CALayer` inside it whose *anchor point is at its paws*. Each
+  tick the layer moves along the track and rotates to the direction of
+  travel, so the paws always touch the screen edge. Counterclockwise is just
+  a heading angle that keeps increasing: 0° → 90° → 180° → 270°.
+* **Crisp pixels.** Frames are tiny native-resolution `CGImage`s (64×32)
+  scaled up with `kCAFilterNearest`, so they stay sharp on Retina displays.
+* **Readable screams.** The speech bubble is *not* a child of the rotating
+  possum layer. It is placed separately, always upright, ahead of the head
+  and toward the middle of the screen.
+* **No assets.** Every pixel and every scream is generated at startup. The
+  release binary is about 400 KB and uses roughly 1% CPU.
+
+Only the primary display (the one with the menu bar) is used. If you change
+the resolution or rearrange displays, the possum adjusts its track within a
+second.
+
+## Sound design
+
+The sounds are generated from scratch at startup, so the app ships no audio
+files. The possum alternates between two of them: "AAAA", hiss, "AAAA",
+hiss...
+
+| Sound | Modelled on | Synthesized as |
+|---|---|---|
+| **"AAAA"** | Nothing real: the cartoon scream from the first version | A jittery sawtooth voice through "AAAA" vowel formants, 1.1-1.7 s, unchanged (a test pins it, bit for bit, to the original) |
+| **Long hiss** | The long, open-mouthed hiss of a Virginia opossum: breath noise centred near 2 kHz, most of its energy at 1-3 kHz, little above 6 kHz | White noise through broad filters plus a low-pass, a 60 ms rise, a slowly drifting force, and a fade. Real hisses last ~0.6 s; this one lasts 1-1.6 s |
+
+The hiss was tuned by measuring it against the recordings. The real long
+hiss and the synthesized one both have a spectral centroid of about 2 kHz,
+with roughly 40-60% of their energy at 1-3 kHz and under 10% above 6 kHz.
+
+The reference recordings were used only for analysis and are not part of
+this repository. They are iNaturalist observations of the Virginia opossum
+(*Didelphis virginiana*) whose species was confirmed by the community:
+[40653183](https://www.inaturalist.org/observations/40653183) (the long hiss
+the model is based on), plus
+[112927147](https://www.inaturalist.org/observations/112927147),
+[163147267](https://www.inaturalist.org/observations/163147267) and
+[407756659](https://www.inaturalist.org/observations/407756659).
+
+## Sprite sheet
+
+![Run cycle (top two rows), scream cycle (next two rows), and the full screaming pose](sprites.png)
+
+The top two rows are the 8-frame run cycle, mouth hanging open. The next two
+are the scream cycle, head thrown back like the «бежит орёт» meme. Regenerate
+the sheet with `cargo run -- --preview sheet.png`.
+
+## Tests
+
+```sh
+cargo test
+```
+
+The tests cover the counterclockwise track geometry and its continuity, the
+WAV and PNG encoders, the sprite frame invariants (paws on the ground in every
+frame), the speech-bubble pointer placement and font, the shape of the long
+hiss, and a golden checksum that keeps the "AAAA" voice identical to the
+original.
