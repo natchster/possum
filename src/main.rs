@@ -46,8 +46,15 @@ use sprite::Canvas;
 use track::Track;
 
 /// Things the menu bar item can ask the possum to do.
-static MUTED: AtomicBool = AtomicBool::new(false);
+///
+/// `SILENT` picks the scream mode: `false` is "Scream" (you hear it, no speech
+/// bubble), `true` is "Scream silently" (you read it in a bubble, no sound).
+static SILENT: AtomicBool = AtomicBool::new(false);
 static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
+
+/// Menu item tags for the two scream modes.
+const TAG_SCREAM: isize = 0;
+const TAG_SCREAM_SILENTLY: isize = 1;
 
 const SHOUTS: [&str; 7] = [
     "AAAAAA!",
@@ -67,7 +74,7 @@ struct Options {
     scale: f64,
     speed: f64,
     volume: f32,
-    mute: bool,
+    silent: bool,
     start: f64,
     preview: Option<String>,
     iconset: Option<String>,
@@ -83,7 +90,8 @@ OPTIONS:
     --scale <N>          Size of one sprite pixel in points (default 3)
     --speed <N>          Running speed in points per second (default 260)
     --volume <0..1>      Scream volume (default 0.6)
-    --mute               Run silently (screams are still visible)
+    --silent             Start in \"Scream silently\" mode: a speech bubble
+                         instead of sound (switch in the menu bar too)
     --start <0..1>       Where on the border to start, as a fraction of one
                          lap from the bottom-left corner (default 0)
     --preview <FILE>     Write a PNG sprite sheet and exit
@@ -97,7 +105,7 @@ fn parse_args() -> Options {
         scale: 3.0,
         speed: 260.0,
         volume: 0.6,
-        mute: false,
+        silent: false,
         start: 0.0,
         preview: None,
         iconset: None,
@@ -120,7 +128,7 @@ fn parse_args() -> Options {
             "--scale" => o.scale = number("--scale", value("--scale")).clamp(1.0, 12.0),
             "--speed" => o.speed = number("--speed", value("--speed")).clamp(10.0, 5000.0),
             "--volume" => o.volume = number("--volume", value("--volume")).clamp(0.0, 1.0) as f32,
-            "--mute" => o.mute = true,
+            "--silent" | "--mute" => o.silent = true,
             "--start" => o.start = number("--start", value("--start")).rem_euclid(1.0),
             "--preview" => o.preview = Some(value("--preview")),
             "--iconset" => o.iconset = Some(value("--iconset")),
@@ -281,6 +289,7 @@ impl Possum {
         // --- sound ---------------------------------------------------------
         let sounds = (0..4)
             .map(|i| {
+                // Pitch and length of the "AAAA" part, as in the first version.
                 let pitch = rng.range(560.0, 760.0);
                 let seconds = rng.range(1.1, 1.7);
                 let s = scream::synthesize(seed.wrapping_add(i * 7919), pitch, seconds);
@@ -405,7 +414,7 @@ impl Possum {
     fn start_scream(&mut self, now: f64) {
         let pick = self.rng.next_u32() as usize % self.sounds.len();
         let (sound, seconds) = &self.sounds[pick];
-        if !MUTED.load(Ordering::Relaxed) {
+        if !SILENT.load(Ordering::Relaxed) {
             sound.stop();
             if !sound.play() {
                 eprintln!("possum: could not play the scream (no audio output?)");
@@ -470,7 +479,9 @@ impl Possum {
             self.start_scream(now);
         }
         let screaming = now < self.scream_until;
-        if MUTED.load(Ordering::Relaxed) {
+        let silent = SILENT.load(Ordering::Relaxed);
+        if silent {
+            // Switched to "Scream silently" mid-scream: hush at once.
             for (sound, _) in &self.sounds {
                 if sound.isPlaying() {
                     sound.stop();
@@ -506,10 +517,14 @@ impl Possum {
             let frames = if screaming { &self.scream_frames } else { &self.run_frames };
             unsafe { self.body.setContents(Some(as_object(&frames[frame]))) };
         }
-        self.bubble.setHidden(!screaming);
+        // The bubble is how a silent scream is "heard".
+        let show_bubble = screaming && silent;
+        self.bubble.setHidden(!show_bubble);
         self.yell.setHidden(!screaming);
-        if screaming {
+        if show_bubble {
             self.place_bubble((x, y), pose.heading);
+        }
+        if screaming {
             let f = (now * 10.0) as usize % self.yell_frames.len();
             unsafe { self.yell.setContents(Some(as_object(&self.yell_frames[f]))) };
         }
@@ -530,10 +545,23 @@ define_class!(
     struct MenuTarget;
 
     impl MenuTarget {
-        #[unsafe(method(toggleMute:))]
-        fn toggle_mute(&self, sender: &NSMenuItem) {
-            let muted = !MUTED.fetch_xor(true, Ordering::Relaxed);
-            sender.setState(if muted { NSControlStateValueOn } else { NSControlStateValueOff });
+        /// "Scream" / "Scream silently": a radio group told apart by tag.
+        #[unsafe(method(setScreamMode:))]
+        fn set_scream_mode(&self, sender: &NSMenuItem) {
+            let mode = sender.tag();
+            SILENT.store(mode == TAG_SCREAM_SILENTLY, Ordering::Relaxed);
+            // SAFETY: the item is in the status menu, which outlives it.
+            if let Some(menu) = unsafe { sender.menu() } {
+                for item in menu.itemArray().iter() {
+                    if item.action() == Some(sel!(setScreamMode:)) {
+                        item.setState(if item.tag() == mode {
+                            NSControlStateValueOn
+                        } else {
+                            NSControlStateValueOff
+                        });
+                    }
+                }
+            }
         }
 
         #[unsafe(method(screamNow:))]
@@ -593,12 +621,18 @@ fn install_status_item(
     header.setEnabled(false);
     menu.addItem(&header);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
-    menu.addItem(&menu_item(mtm, "Scream Now", Some(sel!(screamNow:)), "s", Some(target)));
-    let mute = menu_item(mtm, "Mute", Some(sel!(toggleMute:)), "m", Some(target));
-    if MUTED.load(Ordering::Relaxed) {
-        mute.setState(NSControlStateValueOn);
+    let silent = SILENT.load(Ordering::Relaxed);
+    for (title, tag, checked) in [
+        ("Scream", TAG_SCREAM, !silent),
+        ("Scream silently", TAG_SCREAM_SILENTLY, silent),
+    ] {
+        let mode = menu_item(mtm, title, Some(sel!(setScreamMode:)), "", Some(target));
+        mode.setTag(tag);
+        mode.setState(if checked { NSControlStateValueOn } else { NSControlStateValueOff });
+        menu.addItem(&mode);
     }
-    menu.addItem(&mute);
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&menu_item(mtm, "Scream Now", Some(sel!(screamNow:)), "s", Some(target)));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(mtm, "Quit Possum", Some(sel!(terminate:)), "q", Some(app)));
     item.setMenu(Some(&menu));
@@ -695,7 +729,7 @@ fn main() {
     if let Some(dir) = &opts.iconset {
         return write_iconset(dir);
     }
-    MUTED.store(opts.mute, Ordering::Relaxed);
+    SILENT.store(opts.silent, Ordering::Relaxed);
 
     let mtm = MainThreadMarker::new().expect("possum must run on the main thread");
     let app = NSApplication::sharedApplication(mtm);
