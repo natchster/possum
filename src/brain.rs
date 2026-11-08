@@ -65,6 +65,10 @@ pub trait Host {
     fn hush(&mut self);
     /// A fresh reading of the lock/screensaver/display state.
     fn probe(&mut self) -> quiet::Probe;
+    /// False when there's no way to play sound at all (no audio player).
+    fn has_audio(&self) -> bool {
+        true
+    }
 }
 
 /// Settings from the command line, already in screen units.
@@ -311,6 +315,8 @@ impl Brain {
             self.log(format_args!("{what}: no sound, because {}", reason.describe()));
         } else if SILENT.load(Ordering::Relaxed) {
             self.log(format_args!("{what}: silently, in a speech bubble"));
+        } else if !host.has_audio() {
+            self.log(format_args!("{what}: no sound, because there's no audio player"));
         } else if host.play(self.kind, variant) {
             self.log(format_args!("{what}: out loud"));
         } else {
@@ -368,6 +374,7 @@ mod tests {
         played: Vec<(Kind, usize)>,
         hushes: usize,
         probe: Probe,
+        no_audio: bool,
     }
 
     impl Host for FakeHost {
@@ -380,6 +387,9 @@ mod tests {
         }
         fn probe(&mut self) -> Probe {
             self.probe
+        }
+        fn has_audio(&self) -> bool {
+            !self.no_audio
         }
     }
 
@@ -471,6 +481,16 @@ mod tests {
             assert!(bub.left + bub.w <= 1512.0 + 0.5 && bub.bottom + bub.h <= 982.0 + 0.5, "{bub:?}");
         }
         SILENT.store(false, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn without_an_audio_player_it_screams_without_trying_to_play() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost { no_audio: true, ..Default::default() });
+        let scenes = run(&mut b, &mut host, 0.0, 10.0);
+        assert!(host.played.is_empty());
+        // It still screams visibly.
+        assert!(scenes.iter().any(|s| s.screaming));
     }
 
     #[test]

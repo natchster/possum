@@ -27,7 +27,7 @@ use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::shape::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::{
     AtomEnum, ClipOrdering, ColormapAlloc, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux,
-    ImageFormat, PropMode, StackMode, VisualClass, Window, WindowClass,
+    EventMask, ImageFormat, PropMode, StackMode, VisualClass, Window, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -131,7 +131,8 @@ impl X11 {
                 .background_pixel(0)
                 .border_pixel(0)
                 .colormap(colormap)
-                .override_redirect(1);
+                .override_redirect(1)
+                .event_mask(EventMask::EXPOSURE);
             conn.create_window(32, win, root, 0, 0, 1, 1, 0, WindowClass::INPUT_OUTPUT, visual, &aux)?;
             // An empty input shape: clicks go straight through.
             conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
@@ -187,17 +188,29 @@ impl X11 {
         Ok(())
     }
 
-    /// Handles pending X events; true if the displays changed.
-    fn displays_changed(&self) -> Result<bool> {
-        let mut changed = false;
+    /// Handles pending X events: whether the displays changed, and which
+    /// windows lost their contents (X doesn't keep what's drawn in a window
+    /// that isn't on screen, so those need drawing again).
+    fn events(&self) -> Result<XEvents> {
+        let mut seen = XEvents::default();
         while let Some(event) = self.conn.poll_for_event()? {
-            if matches!(event, Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_)) {
-                changed = true;
+            match event {
+                Event::RandrScreenChangeNotify(_) | Event::RandrNotify(_) => seen.displays_changed = true,
+                Event::Expose(e) if e.window == self.possum => seen.possum_exposed = true,
+                Event::Expose(e) if e.window == self.bubble => seen.bubble_exposed = true,
+                _ => {}
             }
         }
-        Ok(changed)
+        Ok(seen)
     }
 
+}
+
+#[derive(Default)]
+struct XEvents {
+    displays_changed: bool,
+    possum_exposed: bool,
+    bubble_exposed: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +252,7 @@ impl Sounds {
 
 impl Host for Sounds {
     fn play(&mut self, kind: Kind, variant: usize) -> bool {
-        let Some(player) = self.player else { return true };
+        let Some(player) = self.player else { return false };
         let path = &self.files[brain::kind_index(kind)][variant];
         let mut cmd = Command::new(player);
         if player == "aplay" {
@@ -263,6 +276,10 @@ impl Host for Sounds {
 
     fn probe(&mut self) -> quiet::Probe {
         *self.probe.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn has_audio(&self) -> bool {
+        self.player.is_some()
     }
 }
 
@@ -410,7 +427,8 @@ fn start_tray() -> Option<ksni::blocking::Handle<Tray>> {
         Ok(handle) => Some(handle),
         Err(e) => {
             eprintln!(
-                "possum: no tray icon ({e}). On GNOME, the AppIndicator extension adds one. \
+                "possum: no tray icon ({e}). The tray needs a desktop session with \
+                 StatusNotifierItem support (KDE; GNOME with the AppIndicator extension). \
                  Quit with Ctrl+C or `pkill possum`."
             );
             None
@@ -438,8 +456,15 @@ struct App {
 impl App {
     fn tick(&mut self, now: f64) -> Result<()> {
         self.sounds.reap();
-        if self.x.displays_changed()? {
+        let events = self.x.events()?;
+        if events.displays_changed {
             self.check_screen();
+        }
+        if events.possum_exposed {
+            self.possum_key = None;
+        }
+        if events.bubble_exposed {
+            self.bubble_key = None;
         }
         let scene = self.brain.tick(now, &mut self.sounds);
         if scene.check_displays {
@@ -478,6 +503,13 @@ impl App {
             Some(b) => {
                 let (w, h) = (b.w.round() as usize, b.h.round() as usize);
                 let (bx, by) = ((s.x + b.left) as i32, (s.y + s.h - b.bottom - h as f64) as i32);
+                // Map before drawing: X throws away drawing done in an
+                // unmapped window.
+                if !self.x.bubble_mapped {
+                    self.x.conn.map_window(self.x.bubble)?;
+                    self.x.bubble_mapped = true;
+                    self.bubble_key = None;
+                }
                 let key = (b.kind, b.shout, b.quadrant);
                 if self.bubble_key != Some(key) {
                     self.bubble_key = Some(key);
@@ -486,16 +518,10 @@ impl App {
                 } else {
                     self.x.move_to(self.x.bubble, bx, by)?;
                 }
-                if !self.x.bubble_mapped {
-                    self.x.conn.map_window(self.x.bubble)?;
-                    self.x.bubble_mapped = true;
-                }
             }
             None if self.x.bubble_mapped => {
                 self.x.conn.unmap_window(self.x.bubble)?;
                 self.x.bubble_mapped = false;
-                // Redraw on the next show: unmapped windows lose their contents.
-                self.bubble_key = None;
             }
             None => {}
         }
