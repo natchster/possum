@@ -1,7 +1,8 @@
 # Possum guide
 
-Everything about Possum beyond [what it does](../README.md).
+Everything about Possum in detail. For the short version, see the [README](../README.md).
 
+- [What it does, in detail](#what-it-does-in-detail)
 - [Requirements](#requirements)
 - [Run it](#run-it)
 - [Installing](#installing)
@@ -11,6 +12,21 @@ Everything about Possum beyond [what it does](../README.md).
 - [Sound design](#sound-design)
 - [Sprite sheet](#sprite-sheet)
 - [Tests](#tests)
+
+## What it does, in detail
+
+- The possum runs **counterclockwise** around the edge of your screen, mouth
+  hanging open. It runs over the menu bar and the Dock, and it shows up on
+  every Space, full-screen apps included.
+- Every few seconds it **screams**: the jaw drops, it shakes, and it speeds
+  up. It alternates between a cartoon `AAAAAAAA!` and a long hiss modelled on
+  real Virginia opossum recordings (see [Sound design](#sound-design)).
+- From its menu-bar icon you can switch between **Scream** (with sound) and
+  **Scream silently** (a speech bubble instead), or make it **Scream Now**
+  (see [The menu](#the-menu)).
+- It ignores clicks and never steals focus, so it never gets in your way.
+
+It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme.
 
 ## Requirements
 

@@ -10,17 +10,8 @@ never asks for a status update, and always understands exactly how you feel.
 
 ## What it does
 
-- A pixel-art opossum runs **counterclockwise around the edge of your
-  screen**, mouth hanging open, over the menu bar and the Dock, on every
-  Space.
-- Every few seconds it **screams**: the jaw drops, it shakes, it speeds up,
-  and you hear it. It alternates between a cartoon `AAAAAAAA!` and a long
-  hiss modelled on real Virginia opossum recordings.
-- From its menu-bar icon, choose **Scream** (with sound) or **Scream
-  silently** (a speech bubble instead), or make it **Scream Now**.
-- It ignores clicks and never steals focus, so it never gets in your way.
-
-It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme.
+It puts a pixel-art possum on your screen that **runs along the screen
+edge** and **screams**, mouth wide open, lap after lap.
 
 ## Run it
 
@@ -33,8 +24,9 @@ Command Line Tools installed:
 
 To quit, click the possum head in the menu bar and choose **Quit Possum**.
 
-**[Read the guide](docs/GUIDE.md)** for requirements, installing, options, how
-it works, the sound design, and the full sprite sheet.
+**[Read the guide](docs/GUIDE.md)** for everything else: what it does in
+detail, requirements, installing, the menu, options, how it works, the sound
+design, and the full sprite sheet.
 
 ## License
 
