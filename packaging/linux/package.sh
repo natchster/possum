@@ -21,7 +21,8 @@ bin=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
+# The release workflow passes the release number (1.0, 1.1, ...).
+version=${POSSUM_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)}
 arch=$(uname -m)
 case "$arch" in
     x86_64) debarch=amd64 ;;

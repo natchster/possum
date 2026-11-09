@@ -72,7 +72,8 @@ build() {
     echo "$bin"
 }
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+# The release workflow passes the release number (1.0, 1.1, ...).
+version=${POSSUM_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
 app=dist/Possum.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"

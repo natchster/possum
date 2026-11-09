@@ -1,9 +1,11 @@
-# Builds the downloadable apps and packages, then installs and runs each one
-# on clean machines of the kind it's meant for. Every run keeps them as
-# artifacts (one file each, no extra zip around them). When everything
-# passes, a push to main publishes them as a new GitHub release, tagged
-# v<version>-build.<run number>; pushing a v<version> tag publishes them as
-# that version.
+# Every push to main is a release: this picks the next version number
+# (1.0, 1.1, 1.2, ...), builds the downloadable apps and packages, installs
+# and runs each one on clean machines of the kind it's meant for, and when
+# everything passes, publishes them as a GitHub release with release notes.
+#
+# The major version is Cargo.toml's; each release on main takes the next
+# minor number after the newest v<major>.<minor> tag. For 2.0, set
+# version = "2.0.0" in Cargo.toml.
 #
 #   Possum-<v>-macos-apple-silicon.zip   Possum.app for Apple Silicon Macs
 #   Possum-<v>-macos-universal.zip       Possum.app for Apple Silicon and Intel
@@ -16,25 +18,54 @@ name: Release
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  # A manual run builds and tests everything but releases nothing.
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# One release at a time, so version numbers never collide: a push made
+# while a release is being built waits for it to finish.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: pick the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Next version
+        id: pick
+        run: |
+          major=$(sed -n 's/^version = "\([0-9]*\)\..*/\1/p' Cargo.toml | head -1)
+          last=$(git tag -l "v$major.*" | sed "s/^v$major\.//" | { grep -E '^[0-9]+$' || true; } | sort -n | tail -1)
+          if [ -n "$last" ]; then
+            version="$major.$((last + 1))"
+            echo "after v$major.$last comes $version"
+          else
+            version="$major.0"
+            echo "no $major.x release yet: $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   # ---------------------------------------------------------------- build
 
   macos:
     name: build macOS (${{ matrix.kind }})
+    needs: version
     runs-on: macos-latest
+    env:
+      POSSUM_VERSION: ${{ needs.version.outputs.version }}
     strategy:
       matrix:
         include:
@@ -62,9 +93,8 @@ jobs:
         # ditto keeps the signature, permissions and symlinks, like Finder's
         # Compress.
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           ditto -c -k --sequesterRsrc --keepParent dist/Possum.app \
-            "Possum-$version-macos-${{ matrix.kind }}.zip"
+            "Possum-$POSSUM_VERSION-macos-${{ matrix.kind }}.zip"
       - uses: actions/upload-artifact@v7
         with:
           path: Possum-*-macos-${{ matrix.kind }}.zip
@@ -73,7 +103,10 @@ jobs:
 
   windows:
     name: build Windows
+    needs: version
     runs-on: windows-latest
+    env:
+      POSSUM_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - name: Build
@@ -88,9 +121,8 @@ jobs:
           if ($deps -match 'VCRUNTIME|MSVCP|api-ms-win-crt') { throw "possum.exe needs the Visual C++ runtime" }
       - name: Zip it
         run: |
-          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
           Compress-Archive -Path target\release\possum.exe, LICENSE, README.md `
-            -DestinationPath "possum-$version-windows-x86_64.zip"
+            -DestinationPath "possum-$env:POSSUM_VERSION-windows-x86_64.zip"
       - uses: actions/upload-artifact@v7
         with:
           path: possum-*-windows-x86_64.zip
@@ -99,7 +131,10 @@ jobs:
 
   linux:
     name: build Linux (${{ matrix.arch }})
+    needs: version
     runs-on: ${{ matrix.runner }}
+    env:
+      POSSUM_VERSION: ${{ needs.version.outputs.version }}
     # The oldest C library of the supported distributions (glibc 2.41):
     # programs built against it run on the newer ones too.
     container: debian:13
@@ -308,30 +343,19 @@ jobs:
 
   release:
     name: publish release
-    if: github.event_name == 'push'
-    needs: [macos-check, windows-check, linux-check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [version, macos-check, windows-check, linux-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-      - name: Name the release
-        id: name
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            # A version tag pushed by hand must match Cargo.toml.
-            [ "$GITHUB_REF_NAME" = "v$version" ] || {
-              echo "error: tag $GITHUB_REF_NAME but Cargo.toml says $version" >&2; exit 1; }
-            tag=$GITHUB_REF_NAME
-            title="Possum $version"
-          else
-            tag="v$version-build.$GITHUB_RUN_NUMBER"
-            title="Possum $version (build $GITHUB_RUN_NUMBER)"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "title=$title" >> "$GITHUB_OUTPUT"
-          echo "$tag: $title"
+        with:
+          # The history and tags, for the release notes.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/download-artifact@v8
         with:
           pattern: Possum-*
@@ -346,37 +370,56 @@ jobs:
           merge-multiple: true
           # The file as uploaded, like a browser download: don't unpack zips.
           skip-decompress: true
+      - name: Write the release notes
+        run: |
+          files=$(ls dist)
+          # All nine, or no release.
+          [ "$(echo "$files" | wc -l)" -eq 9 ] || { echo "error: expected 9 files, got:" >&2; echo "$files" >&2; exit 1; }
+          pick() { echo "$files" | grep -E "$1"; }
+          previous=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          {
+            echo "## Download"
+            echo
+            echo "| System | File |"
+            echo "|---|---|"
+            echo "| macOS 11+, Apple Silicon | \`$(pick 'apple-silicon')\` |"
+            echo "| macOS 11+, Apple Silicon or Intel | \`$(pick 'universal')\` |"
+            echo "| Windows 10 / 11 (also on Arm) | \`$(pick 'windows')\` |"
+            echo "| Ubuntu, Debian | \`$(pick 'amd64\.deb')\`, \`$(pick 'arm64\.deb')\` |"
+            echo "| Fedora | \`$(pick 'x86_64\.rpm')\`, \`$(pick 'aarch64\.rpm')\` |"
+            echo "| Any Linux (glibc 2.39+) | \`$(pick 'x86_64\.tar')\`, \`$(pick 'aarch64\.tar')\` |"
+            echo
+            echo "They aren't signed by Apple or Microsoft, so the first start needs one extra"
+            echo "click: see [Download](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#download)"
+            echo "in the guide. Every file was installed and run on clean machines before this"
+            echo "release was published."
+            echo
+            echo "## Changes"
+            echo
+            if [ -n "$previous" ]; then
+              git log --no-merges --format='- %s' "$previous..$GITHUB_SHA"
+              echo
+              echo "**Full changelog:** https://github.com/$GITHUB_REPOSITORY/compare/$previous...v$VERSION"
+            else
+              echo "The first release. Everything so far:"
+              echo
+              git log --no-merges --format='- %s' "$GITHUB_SHA"
+            fi
+          } > notes.md
+          cat notes.md
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.name.outputs.tag }}
-          TITLE: ${{ steps.name.outputs.title }}
         run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "error: v$VERSION is already released" >&2; exit 1
+          fi
           cd dist
-          files=$(ls)
-          # All nine, or no release.
-          [ "$(echo "$files" | wc -l)" -eq 9 ] || { echo "error: expected 9 files, got:" >&2; echo "$files" >&2; exit 1; }
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
-          pick() { echo "$files" | grep -E "$1"; }
-          cat > ../notes.md <<EOF
-          | System | File |
-          |---|---|
-          | macOS 11+, Apple Silicon | \`$(pick 'apple-silicon')\` |
-          | macOS 11+, Apple Silicon or Intel | \`$(pick 'universal')\` |
-          | Windows 10 / 11 (also on Arm) | \`$(pick 'windows')\` |
-          | Ubuntu, Debian | \`$(pick 'amd64\.deb')\`, \`$(pick 'arm64\.deb')\` |
-          | Fedora | \`$(pick 'x86_64\.rpm')\`, \`$(pick 'aarch64\.rpm')\` |
-          | Any Linux (glibc 2.39+) | \`$(pick 'x86_64\.tar')\`, \`$(pick 'aarch64\.tar')\` |
-
-          They aren't signed by Apple or Microsoft, so the first start needs one
-          extra click: see [Download](https://github.com/${{ github.repository }}/blob/main/docs/GUIDE.md#download)
-          in the guide. Every file was installed and run on clean machines
-          before this release was published.
-          EOF
           # The tag is made on the tested commit. (A tag made with this
           # token doesn't start the workflow again.)
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TITLE" \
-            --notes-file ../notes.md --generate-notes --latest ./*
-          gh release view "$TAG" --json url,assets \
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "Possum $VERSION" \
+            --notes-file ../notes.md --latest ./*
+          gh release view "v$VERSION" --json url,assets \
             --jq '.url, (.assets[] | "  \(.name)  \(.size) bytes")'

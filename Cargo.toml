@@ -1,6 +1,6 @@
 [package]
 name = "possum"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 # Debian 13 packages Rust 1.85; resolver 3 picks dependency versions that
 # build with it.

@@ -54,15 +54,11 @@ distribution's Rust if it's new enough, or install it from
 
 ## Download
 
-Every push to `main` runs the
-[Release workflow](https://github.com/natchster/possum/actions/workflows/release.yml),
-which builds these files, installs and runs them on clean machines, and,
-when everything passes, publishes them as a new release on the
-[Releases](https://github.com/natchster/possum/releases) page: the newest
-is marked **Latest**, and is named after the version and the build number,
-like `v0.1.0-build.12`. The same files also stay with each workflow run as
-**Artifacts** for 90 days (you need to be signed in to GitHub to download
-those); each is the file itself, not wrapped in another zip.
+Ready-made builds are on the
+[Releases](https://github.com/natchster/possum/releases) page. Every change
+to Possum is released, numbered 1.0, 1.1, 1.2 and so on; the newest is
+marked **Latest**, and its notes say what changed. Download the file for
+your system from its **Assets**:
 
 | File | For |
 |---|---|
@@ -94,8 +90,8 @@ click **More info → Run anyway**.
 place of these:
 
 ```sh
-sudo apt install ./possum_0.1.0_amd64.deb       # Ubuntu, Debian
-sudo dnf install ./possum-0.1.0-1.x86_64.rpm    # Fedora
+sudo apt install ./possum_1.0_amd64.deb         # Ubuntu, Debian
+sudo dnf install ./possum-1.0-1.x86_64.rpm      # Fedora
 ```
 
 Possum then shows up in your app list, and `possum` works in a terminal.
@@ -108,7 +104,7 @@ The tarball holds the same files as the packages, under `bin/` and
 only, app-list entry and icon included, with no root needed:
 
 ```sh
-tar -xzf possum-0.1.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
+tar -xzf possum-1.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
 ```
 
 (That puts `possum` in `~/.local/bin`, which Ubuntu, Debian and Fedora add
@@ -500,14 +496,20 @@ Each artifact is a single file uploaded as is (`archive: false`): GitHub's
 usual zip around artifacts would drop the executable permission that the
 app and the Linux binary need.
 
-**Releases:** when every check passes on a push to `main`, the workflow
-publishes a GitHub release with all nine files, a `SHA256SUMS` file and a
-table of which file is for which system. It's tagged
-`v<version>-build.<run number>` on the tested commit, so each push gets
-its own. If any file is missing or any check fails, there's no release. To
-release a proper version, set it in `Cargo.toml`, commit, and push a
-matching tag (`git tag v0.2.0 && git push origin v0.2.0`): that release is
-named just "Possum 0.2.0".
+**Releases and version numbers:** every push to `main` is released once
+all of the above passes. Versions go 1.0, 1.1, 1.2 and so on: the major
+version is the one in `Cargo.toml`, and each release takes the next minor
+number after the newest `v<major>.<minor>` tag. A first job picks the
+number and every build uses it, in the file names, the app's
+`Info.plist` and the packages' version fields. The release, tagged `v1.N`
+on the tested commit and marked **Latest**, holds all nine files, a
+`SHA256SUMS` file, and notes with a table of which file is for which
+system and the commits since the previous release. If any file is missing
+or any check fails, nothing is released. Releases are made one at a time:
+a push made while one is being built waits its turn, so numbers never
+collide. For a new major version, set `version = "2.0.0"` in `Cargo.toml`;
+the next push releases 2.0. (Running the workflow by hand builds and tests
+everything but releases nothing.)
 
 ### Testing on a real Linux desktop in a VM
 
