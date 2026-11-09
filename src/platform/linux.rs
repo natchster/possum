@@ -6,7 +6,9 @@
 //!   to the shape* of its picture (the X11 Shape extension, as xeyes and
 //!   oneko do). That needs no compositor, and it avoids 32-bit alpha
 //!   windows, which crash Xwayland 24.1 (and with it GNOME Shell) when it
-//!   runs without GPU buffer sharing, as in virtual machines. An empty input
+//!   runs without GPU buffer sharing, as in virtual machines. On Xwayland,
+//!   the windows only appear once the desktop's compositor has taken over
+//!   X11 (see `wait_for_xwayland_compositor`). An empty input
 //!   shape makes the windows click-through. Override-redirect windows aren't
 //!   managed by the window manager, so they sit on top of everything,
 //!   including panels and docks.
@@ -58,6 +60,7 @@ pub fn run(opts: &Options) {
 
 fn try_run(opts: &Options) -> Result<()> {
     let (conn, screen_num) = x11rb::connect(None)?;
+    wait_for_xwayland_compositor(&conn, screen_num, opts.verbose)?;
     let x = X11::new(conn, screen_num)?;
 
     let seed = super::seed();
@@ -96,6 +99,51 @@ fn try_run(opts: &Options) -> Result<()> {
     }
     app.sounds.hush();
     Ok(())
+}
+
+/// On Xwayland, waits (a few seconds at most) until the desktop's compositor
+/// has taken over X11, before Possum shows any window.
+///
+/// Xwayland 24.1 (Ubuntu 26.04's, for one) gives a top-level window its
+/// Wayland surface only if the compositor has already redirected it when the
+/// window is shown. A window shown earlier never gets one, and the first
+/// time it moves, Xwayland follows the missing surface and crashes
+/// (`damage_report` in `xwayland-window.c`; later Xwayland releases
+/// restructured that code). GNOME starts Xwayland only when the first X11
+/// app connects, so when that app is Possum (started from the app list or at
+/// login), its first requests arrive a few milliseconds before GNOME has
+/// redirected windows.
+///
+/// GNOME claims the compositor selection (`_NET_WM_CM_S<n>`) before it
+/// redirects windows, so that's not enough. Right after redirecting, it sets
+/// the RandR primary output (mutter's `on_x11_display_setup`), and one
+/// client's requests are handled in order, so a primary output proves the
+/// redirect is done. Plain X11 servers (no `XWAYLAND` extension) and an
+/// Xwayland whose compositor is already set up don't wait at all; a
+/// compositor that never sets a primary output costs a few seconds once.
+fn wait_for_xwayland_compositor(conn: &RustConnection, screen_num: usize, verbose: bool) -> Result<()> {
+    const PATIENCE: Duration = Duration::from_secs(4);
+    if conn.extension_information("XWAYLAND")?.is_none() {
+        return Ok(());
+    }
+    let root = conn.setup().roots[screen_num].root;
+    let name = format!("_NET_WM_CM_S{screen_num}");
+    let selection = conn.intern_atom(false, name.as_bytes())?.reply()?.atom;
+    let start = Instant::now();
+    let mut waited = false;
+    loop {
+        let compositor = conn.get_selection_owner(selection)?.reply()?.owner != x11rb::NONE;
+        let primary = conn.randr_get_output_primary(root)?.reply()?.output != x11rb::NONE;
+        if (compositor && primary) || start.elapsed() >= PATIENCE {
+            if verbose && waited {
+                let what = if compositor && primary { "ready" } else { "not ready, going ahead" };
+                eprintln!("possum: Xwayland's compositor {what} after {:.3}s", start.elapsed().as_secs_f64());
+            }
+            return Ok(());
+        }
+        waited = true;
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 // ---------------------------------------------------------------------------

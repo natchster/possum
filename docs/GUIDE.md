@@ -186,7 +186,10 @@ Good to know:
   XWayland, which GNOME and KDE start automatically. It has been run on
   Ubuntu 26.04's GNOME on Wayland (see [Tests](#tests)): it runs over the
   top bar and the dock, its tray icon and menu work, and locking the screen
-  silences it.
+  silences it. GNOME starts XWayland only when the first X11 app opens, so
+  Possum often starts it; it then waits a few milliseconds for GNOME to
+  take over before showing its windows, because XWayland 24.1 crashes if a
+  window shown earlier is moved (see [How it works](#how-it-works)).
 - **The tray icon** uses the StatusNotifierItem standard. KDE shows it out
   of the box; on GNOME it needs the AppIndicator extension, which Ubuntu
   ships enabled. On Fedora or Debian with GNOME, install
@@ -319,6 +322,14 @@ fast possum.
   buffer sharing (as in virtual machines). An empty input shape makes the
   windows click-through, and override-redirect keeps them above panels and
   docks.
+* **On XWayland, it waits for the desktop first.** XWayland 24.1 gives a
+  window its Wayland surface only if the compositor has already redirected
+  it when the window is shown; move a window shown earlier, and XWayland
+  crashes. GNOME starts XWayland only when the first X11 app opens, so when
+  that's Possum, its windows would win that race by a few milliseconds. So
+  on XWayland, Possum waits until GNOME has set XWayland's primary output,
+  which GNOME does right after redirecting windows (at most a few seconds,
+  for desktops that never set one). On plain X11 it doesn't wait.
 * **Crisp pixels.** The sprites are tiny (64×32) and scaled up with
   nearest-neighbour sampling, so they stay sharp on any display.
 * **Readable screams.** The speech bubble isn't rotated with the possum. It
@@ -526,7 +537,13 @@ Xwayland crash above. Run there, it was checked that:
   GNOME's D-Bus menu interface);
 - it plays sound through PipeWire's `pw-play`;
 - locking the session (`loginctl lock-session`, like Super+L) silences it,
-  and it screams again after unlocking.
+  and it screams again after unlocking;
+- installed from the release's `.deb` and started from the app list as the
+  first X11 app after logging in (so GNOME starts XWayland just for it), it
+  starts cleanly. That's the test that found XWayland 24.1 crashing when a
+  window shown before GNOME has redirected it gets moved; Possum now waits
+  for GNOME to set XWayland's primary output, which it does right after
+  redirecting windows.
 
 To set up your own: boot a cloud image of your distribution with
 `qemu-system-aarch64 -machine virt,accel=hvf` (or `accel=kvm` on Linux) and
