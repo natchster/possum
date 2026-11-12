@@ -225,7 +225,8 @@ Good to know:
   `target\release\`) anywhere, for example to
   `%LOCALAPPDATA%\Programs\Possum`. It's a single file.
 - **Finding it:** it has no taskbar button; it lives in the notification
-  area (the tray), possibly behind the **^** overflow arrow.
+  area (the tray), possibly behind the **^** overflow arrow. If Explorer
+  restarts, the icon comes back by itself.
 - **Start at login:** press Win+R, type `shell:startup`, and put a shortcut
   to `possum.exe` in the folder that opens.
 - **Copying it to another PC:** an `.exe` you build yourself isn't signed, so
@@ -307,6 +308,11 @@ fast possum.
 * **macOS** draws with Core Animation: one transparent, click-through window
   over the screen, and the possum is a layer in it. The GPU does the
   rotating and moving.
+* **The Windows tray icon comes back.** When Explorer restarts (after a
+  crash, an update, or from Task Manager), it forgets every notification-area
+  icon and broadcasts `TaskbarCreated`; Possum then adds its icon again. If
+  adding fails, for example at login before the taskbar exists, it tries
+  again every two seconds.
 * **Windows and Linux** draw in software: two small, transparent,
   click-through, always-on-top windows (the possum and its bubble) that move
   along the edge. The possum is rotated in software only when its picture

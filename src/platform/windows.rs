@@ -4,7 +4,9 @@
 //!   always on top, transparent per pixel, click-through, and never take the
 //!   focus. They're drawn with the software renderer and shown with
 //!   `UpdateLayeredWindow`.
-//! * A notification-area (tray) icon with the menu.
+//! * A notification-area (tray) icon with the menu. It comes back by itself
+//!   when Explorer restarts, and appears late rather than never when
+//!   Possum starts before the taskbar does.
 //! * Sounds are played from memory with `PlaySound`.
 //! * Quiet times: session notifications (lock/unlock, switching users),
 //!   display power notifications (on/off), system sleep, plus a check of
@@ -15,9 +17,9 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -39,13 +41,14 @@ use windows_sys::Win32::UI::HiDpi::{
     GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
 };
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyMenu,
-    DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-    SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW, TrackPopupMenu, TranslateMessage,
-    DEVICE_NOTIFY_WINDOW_HANDLE, HICON, HWND_TOPMOST, ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DestroyIcon, DestroyMenu, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage,
+    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TrackPopupMenu, TranslateMessage, DEVICE_NOTIFY_WINDOW_HANDLE, HICON, HWND_TOPMOST,
+    ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
     PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, SPI_GETSCREENSAVERRUNNING,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, TPM_NONOTIFY, TPM_RETURNCMD,
     TPM_RIGHTBUTTON, ULW_ALPHA, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_NULL, WM_POWERBROADCAST,
@@ -73,8 +76,14 @@ const MENU_QUIT: usize = 4;
 static SYSTEM_EVENTS: Mutex<Vec<quiet::Event>> = Mutex::new(Vec::new());
 static DISPLAYS_CHANGED: AtomicBool = AtomicBool::new(false);
 
+/// The "TaskbarCreated" message: Explorer broadcasts it when it creates the
+/// taskbar anew (after it restarted or crashed, and on some display
+/// changes). The notification area starts out empty then.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+    static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -113,6 +122,8 @@ pub fn prepare_console() {
 pub fn run(opts: &Options) {
     // SAFETY: called once, before any window exists.
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    // SAFETY: registering (or looking up) a message by its name.
+    TASKBAR_CREATED.store(unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) }, Ordering::Relaxed);
 
     let seed = super::seed();
     let mut rng = Rng::new(seed);
@@ -172,8 +183,14 @@ pub fn run(opts: &Options) {
         WTSRegisterSessionNotification(main, NOTIFY_FOR_THIS_SESSION);
         RegisterPowerSettingNotification(main, &GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE);
         SetTimer(main, TIMER_ID, 15, None);
+        // Let "TaskbarCreated" through even when Possum runs as
+        // administrator (Explorer itself doesn't).
+        let taskbar_created = TASKBAR_CREATED.load(Ordering::Relaxed);
+        if taskbar_created != 0 {
+            ChangeWindowMessageFilterEx(main, taskbar_created, MSGFLT_ALLOW, null_mut());
+        }
     }
-    let tray_icon = add_tray_icon(main);
+    TRAY.with(|tray| *tray.borrow_mut() = Some(Tray::new(main, opts.verbose)));
 
     let art = Art::new();
     let reach = render::reach(&art, scale);
@@ -208,7 +225,7 @@ pub fn run(opts: &Options) {
             app.sounds.hush();
         }
     });
-    remove_tray_icon(main, tray_icon);
+    TRAY.with(|tray| tray.borrow_mut().take());
 }
 
 /// The primary monitor's frame in virtual-screen pixels (y-down), and its
@@ -240,6 +257,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     }
                 }
             });
+            with_tray(Tray::retry);
             0
         }
         WM_TRAY => {
@@ -300,6 +318,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             DISPLAYS_CHANGED.store(true, Ordering::Relaxed);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
+        _ if msg != 0 && msg == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+            with_tray(Tray::taskbar_created);
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -317,26 +339,94 @@ fn tray_data(main: HWND) -> NOTIFYICONDATAW {
     data
 }
 
-fn add_tray_icon(main: HWND) -> HICON {
-    let icon = icon_from(&sprite::status_icon(), 32);
-    let mut data = tray_data(main);
-    data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    data.uCallbackMessage = WM_TRAY;
-    data.hIcon = icon;
-    let tip = wide("Possum is screaming");
-    data.szTip[..tip.len()].copy_from_slice(&tip);
-    // SAFETY: `data` is fully initialised for NIM_ADD.
-    unsafe { Shell_NotifyIconW(NIM_ADD, &data) };
-    icon
+/// The notification-area icon. Explorer forgets every icon when it restarts
+/// (after a crash, an update, or a restart from Task Manager) and then says
+/// so with "TaskbarCreated"; Possum then adds its icon again. Adding can
+/// also fail, for example when Possum starts at login before the taskbar
+/// exists: Possum then tries again every couple of seconds.
+struct Tray {
+    main: HWND,
+    icon: HICON,
+    shown: bool,
+    retry_at: Instant,
+    verbose: bool,
 }
 
-fn remove_tray_icon(main: HWND, icon: HICON) {
-    let data = tray_data(main);
-    // SAFETY: removes the icon added above; the HICON is ours to destroy.
-    unsafe {
-        Shell_NotifyIconW(NIM_DELETE, &data);
-        DestroyIcon(icon);
+impl Tray {
+    const RETRY: Duration = Duration::from_secs(2);
+
+    fn new(main: HWND, verbose: bool) -> Self {
+        let icon = icon_from(&sprite::status_icon(), 32);
+        let mut tray = Self { main, icon, shown: false, retry_at: Instant::now(), verbose };
+        if !tray.show() && verbose {
+            eprintln!("possum: couldn't add the tray icon (no taskbar yet?); trying again");
+        }
+        tray
     }
+
+    /// Adds the icon, or refreshes it if the notification area still has
+    /// it. Returns whether it's there now.
+    fn show(&mut self) -> bool {
+        let mut data = tray_data(self.main);
+        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        data.uCallbackMessage = WM_TRAY;
+        data.hIcon = self.icon;
+        let tip = wide("Possum is screaming");
+        data.szTip[..tip.len()].copy_from_slice(&tip);
+        // SAFETY: `data` is fully initialised for NIM_ADD and NIM_MODIFY.
+        let shown = unsafe { Shell_NotifyIconW(NIM_ADD, &data) != 0 || Shell_NotifyIconW(NIM_MODIFY, &data) != 0 };
+        if self.verbose && shown != self.shown {
+            if shown {
+                eprintln!("possum: the tray icon is in the notification area");
+            } else {
+                eprintln!("possum: couldn't add the tray icon (no taskbar yet?); trying again");
+            }
+        }
+        if !shown {
+            self.retry_at = Instant::now() + Self::RETRY;
+        }
+        self.shown = shown;
+        shown
+    }
+
+    /// Explorer made a new taskbar, without the icon.
+    fn taskbar_created(&mut self) {
+        if self.verbose {
+            eprintln!("possum: the taskbar was created anew; adding the tray icon again");
+        }
+        self.shown = false;
+        self.show();
+    }
+
+    /// On every timer tick: try again if adding the icon failed.
+    fn retry(&mut self) {
+        if !self.shown && Instant::now() >= self.retry_at {
+            self.show();
+        }
+    }
+}
+
+impl Drop for Tray {
+    fn drop(&mut self) {
+        let data = tray_data(self.main);
+        // SAFETY: removes the icon added above; the HICON is ours to destroy.
+        unsafe {
+            Shell_NotifyIconW(NIM_DELETE, &data);
+            DestroyIcon(self.icon);
+        }
+    }
+}
+
+/// Runs `f` on the tray icon, unless it's busy (a menu's modal loop can
+/// deliver messages while tray code runs).
+fn with_tray(f: impl FnOnce(&mut Tray)) {
+    TRAY.with(|tray| {
+        if let Ok(mut tray) = tray.try_borrow_mut() {
+            if let Some(tray) = tray.as_mut() {
+                f(tray);
+            }
+        }
+    });
 }
 
 /// An icon from a sprite canvas, `size` pixels square, with real alpha.
