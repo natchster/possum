@@ -208,7 +208,8 @@ Good to know:
   `/Applications`.
 - **Finding it:** Possum has no Dock icon and doesn't appear in the
   Command-Tab switcher. It lives in the menu bar, as a little screaming
-  possum head.
+  possum head, and ⌃⌥⌘P opens its menu even when the menu bar is too full
+  to show the head (see [The menu](#the-menu)).
 - **Start at login:** System Settings → General → Login Items → **+** →
   Possum.
 - **Copying it to another Mac:** a universal build runs on both Apple
@@ -253,7 +254,9 @@ Good to know:
 ## The menu
 
 Click the little screaming possum head: in the **menu bar** on macOS, in the
-**notification area** (tray) on Windows, and in the **tray** on Linux.
+**notification area** (tray) on Windows, and in the **tray** on Linux. On
+macOS, **Control-Option-Command-P** (⌃⌥⌘P) also opens the menu, right at the
+mouse pointer, wherever the icon is.
 
 | Item | What it does |
 |------|--------------|
@@ -261,6 +264,16 @@ Click the little screaming possum head: in the **menu bar** on macOS, in the
 | **Scream silently** | No sound; an upright speech bubble instead (`AAAAAAAAH!` or `HSSSSSS!`) |
 | **Scream Now** | Makes it scream right away |
 | **Quit Possum** | Quits (Ctrl+C also works if you started it from a terminal) |
+
+**When the Mac's menu bar is too full**, macOS silently leaves some icons
+out, and Possum's may be one of them. Possum notices when its icon has no
+room at start-up: it then screams silently, so it can't be loud with no menu
+to quiet it, and a note in the top-right corner says so and names the
+shortcut for a few seconds. It shows the note again if the icon gets left
+out later on, as far as it can tell (see [How it works](#how-it-works)). To
+get the icon back, make room: Command-drag other icons out of the menu bar,
+or turn some off in System Settings → Menu Bar. On macOS 27, the **«**
+button at the left of the icons shows the ones that didn't fit.
 
 ## Options
 
@@ -308,6 +321,20 @@ fast possum.
 * **macOS** draws with Core Animation: one transparent, click-through window
   over the screen, and the possum is a layer in it. The GPU does the
   rotating and moving.
+* **Does the Mac's menu-bar icon fit?** macOS has no way to tell an app,
+  and the usual workaround (asking whether the icon's window is visible)
+  says "yes" for a left-out icon on macOS 27. So Possum looks at where macOS
+  put the icon: in a menu bar, it fits. An icon with no room is parked off
+  screen, just below the main screen's bottom-left corner (macOS 27), or
+  behind the camera notch (older macOS). Every new icon waits at that
+  parking spot for about 10 ms before it's placed, so Possum holds the
+  first scream until the icon has been in one place for a moment (well
+  under a second), and decides then whether to start silently. This is
+  observed behaviour, not an API: whenever the icon is anywhere else,
+  Possum assumes it fits. One case goes unnoticed: on macOS 27, an icon
+  that was showing and is then crowded out behind the **«** button keeps
+  reporting its old spot in the menu bar. ⌃⌥⌘P is a system-wide shortcut
+  (`RegisterEventHotKey`), which needs no permissions.
 * **The Windows tray icon comes back.** When Explorer restarts (after a
   crash, an update, or from Task Manager), it forgets every notification-area
   icon and broadcasts `TaskbarCreated`; Possum then adds its icon again. If
@@ -464,7 +491,9 @@ cargo test
 
 The tests cover the possum's behaviour (it screams right away, alternates
 AAAA and hiss, keeps quiet while locked, cuts a scream off when the screen
-locks, shows a bubble only in silent mode and keeps it on screen); the
+locks, shows a bubble only in silent mode and keeps it on screen, holds its
+first scream while asked to); on macOS, telling whether the menu-bar icon
+fits from the spots macOS 27 really uses, and the note's five seconds; the
 counterclockwise track on screens of every shape and keeping the same edge
 after a screen change; following the primary display through every kind of
 display change; the quiet-time state machine; the software renderer (every

@@ -60,7 +60,8 @@ cargo build --release
 ```
 
 To quit, click the possum head in the menu bar or tray and choose **Quit
-Possum**.
+Possum**. On a Mac, ⌃⌥⌘P opens the same menu, even when the menu bar is too
+full to show the head.
 
 **[Read the guide](docs/GUIDE.md)** for everything else: what it does in
 detail, downloading, step-by-step builds for each system, installing, the

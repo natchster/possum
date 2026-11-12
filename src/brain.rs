@@ -134,6 +134,8 @@ pub struct Brain {
     next_check: f64,
     scream_until: f64,
     next_scream: f64,
+    /// No screams for now (see `hold_screams`).
+    holding: bool,
     was_silent: bool,
     quiet: Quiet,
     was_quiet: Option<quiet::Reason>,
@@ -175,6 +177,7 @@ impl Brain {
             scream_until: 0.0,
             // It screams right away...
             next_scream: 0.25,
+            holding: false,
             was_silent: SILENT.load(Ordering::Relaxed),
             quiet: Quiet::default(),
             was_quiet: None,
@@ -205,6 +208,15 @@ impl Brain {
     /// A direct reading of the system state (see quiet.rs).
     pub fn update(&mut self, probe: quiet::Probe) {
         self.quiet.update(probe);
+    }
+
+    /// Holds back screams while the platform settles something first (on
+    /// macOS: whether the menu-bar icon fits, which decides whether the very
+    /// first scream is out loud). A scream that came due meanwhile starts
+    /// as soon as the hold is lifted. The possum keeps running either way.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn hold_screams(&mut self, hold: bool) {
+        self.holding = hold;
     }
 
     #[cfg(test)]
@@ -250,7 +262,7 @@ impl Brain {
         if SCREAM_NOW.swap(false, Ordering::Relaxed) {
             self.next_scream = now;
         }
-        if now >= self.next_scream {
+        if now >= self.next_scream && !self.holding {
             self.start_scream(now, host);
         }
         let screaming = now < self.scream_until;
@@ -426,6 +438,20 @@ mod tests {
         for pair in host.played.windows(2) {
             assert_ne!(pair[0].0, pair[1].0, "two of the same kind in a row");
         }
+    }
+
+    #[test]
+    fn a_hold_delays_the_first_scream_until_it_is_lifted() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost::default());
+        b.hold_screams(true);
+        let scenes = run(&mut b, &mut host, 0.0, 1.0);
+        assert!(host.played.is_empty(), "screamed while held: {:?}", host.played);
+        assert!(scenes.last().unwrap().x > scenes[0].x, "the possum should keep running");
+        // Lifted: the overdue opening "AAAA" starts right away.
+        b.hold_screams(false);
+        b.tick(1.0, &mut host);
+        assert_eq!(host.played.first().map(|p| p.0), Some(Kind::Aaaa));
     }
 
     #[test]

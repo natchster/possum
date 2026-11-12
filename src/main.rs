@@ -66,7 +66,8 @@ OPTIONS:
                          terminal
     -h, --help           Show this help
 
-Quit from the possum's menu-bar or tray icon, or with Ctrl+C in the terminal.";
+Quit from the possum's menu-bar or tray icon, or with Ctrl+C in the terminal.
+On macOS, Control-Option-Command-P also opens the menu.";
 
 /// Parses a numeric option. NaN and infinity are rejected: they would slip
 /// through `clamp` and wreck the window geometry.
