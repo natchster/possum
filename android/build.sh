@@ -1,11 +1,18 @@
 #!/bin/sh
 # Builds Possum for Android phones and tablets, Samsung DeX included:
-# dist/Possum-<version>-android-arm64.apk, signed with this computer's
-# Android debug key, ready for `adb install` or to copy to the phone.
+# dist/Possum-<version>-android.apk, ready for `adb install` or to copy to
+# the phone. It holds the Rust core for arm64 (every phone and tablet DeX
+# runs on) and x86_64 (Chromebooks, and the emulator CI tests it on).
+#
+# Signed with this computer's Android debug key, or, for releases, with the
+# key in $POSSUM_KEYSTORE (password in $POSSUM_KEYSTORE_PASSWORD, key alias
+# $POSSUM_KEY_ALIAS, "possum" if unset). The version is $POSSUM_VERSION, or
+# from git.
 #
 # No Gradle: the SDK's own tools, run one after another. Needs the Android
 # SDK (platform 36, build-tools, NDK: see android/README.md), JDK 17 or
-# newer, and Rust with the aarch64-linux-android target.
+# newer, and Rust with the aarch64-linux-android and x86_64-linux-android
+# targets.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,6 +23,8 @@ SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}
 # on Android 12 and newer (overlays on other displays need 12).
 API=36
 MIN_API=31
+# Rust target and Android ABI.
+ABIS="aarch64-linux-android:arm64-v8a x86_64-linux-android:x86_64"
 
 fail() {
     echo "android/build.sh: $*" >&2
@@ -31,26 +40,36 @@ PLATFORM=$SDK/platforms/android-$API/android.jar
 BUILD_TOOLS=$SDK/build-tools/$(newest "$SDK/build-tools")
 [ -x "$BUILD_TOOLS/aapt2" ] || fail "no build-tools: sdkmanager \"build-tools;36.1.0\""
 NDK=$SDK/ndk/$(newest "$SDK/ndk")
-CLANG=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android$MIN_API-clang 2>/dev/null | head -1)
-[ -n "$CLANG" ] || fail "no NDK: sdkmanager \"ndk;29.0.14206865\""
+NDK_BIN=$(ls -d "$NDK"/toolchains/llvm/prebuilt/*/bin 2>/dev/null | head -1)
+[ -x "$NDK_BIN/aarch64-linux-android$MIN_API-clang" ] || fail "no NDK: sdkmanager \"ndk;29.0.14206865\""
 if [ -z "${JAVA_HOME:-}" ] && [ -x /usr/libexec/java_home ]; then
     JAVA_HOME=$(/usr/libexec/java_home)
 fi
 JAVA_BIN=${JAVA_HOME:+$JAVA_HOME/bin/}
 
-VERSION=$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
-CODE=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
+VERSION=${POSSUM_VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')}
+VERSION=${VERSION:-dev}
+# Android only installs an update with a higher version code: 1.4 is 1004,
+# 2.0 is 2000. (A build between releases has the last release's.)
+CODE=$(echo "$VERSION" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p' | { read -r major minor && echo $((major * 1000 + minor)); } || true)
+CODE=${CODE:-1}
 OUT=$ROOT/target/android
-APK=$ROOT/dist/Possum-${VERSION:-dev}-android-arm64.apk
+APK=$ROOT/dist/Possum-$VERSION-android.apk
 rm -rf "$OUT"
-mkdir -p "$OUT/res" "$OUT/classes" "$OUT/apk/lib/arm64-v8a" "$ROOT/dist"
+mkdir -p "$OUT/res" "$OUT/classes" "$OUT/apk" "$ROOT/dist"
 
-echo "== Rust core (arm64)"
-# 16 KB pages: newer phones use them, and Google Play requires it.
-CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CLANG \
-CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384" \
-    cargo build --manifest-path "$ROOT/android/Cargo.toml" --release --lib --target aarch64-linux-android
-cp "$ROOT/android/target/aarch64-linux-android/release/libpossum.so" "$OUT/apk/lib/arm64-v8a/"
+for pair in $ABIS; do
+    target=${pair%%:*} abi=${pair#*:}
+    echo "== Rust core ($abi)"
+    clang=$NDK_BIN/$target$MIN_API-clang
+    vars=$(echo "$target" | tr 'a-z-' 'A-Z_')
+    # 16 KB pages: newer phones use them, and Google Play requires it.
+    env "CARGO_TARGET_${vars}_LINKER=$clang" \
+        "CARGO_TARGET_${vars}_RUSTFLAGS=-C link-arg=-Wl,-z,max-page-size=16384" \
+        cargo build --manifest-path "$ROOT/android/Cargo.toml" --release --lib --target "$target"
+    mkdir -p "$OUT/apk/lib/$abi"
+    cp "$ROOT/android/target/$target/release/libpossum.so" "$OUT/apk/lib/$abi/"
+done
 
 echo "== Launcher icons"
 cargo run --quiet --manifest-path "$ROOT/android/Cargo.toml" --release --bin possum-icons -- "$OUT/res"
@@ -59,7 +78,7 @@ echo "== Resources and manifest"
 "$BUILD_TOOLS/aapt2" compile --dir "$OUT/res" -o "$OUT/res.zip"
 "$BUILD_TOOLS/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$ROOT/android/AndroidManifest.xml" \
     --min-sdk-version $MIN_API --target-sdk-version $API \
-    --version-code "$CODE" --version-name "${VERSION:-dev}" "$OUT/res.zip"
+    --version-code "$CODE" --version-name "$VERSION" "$OUT/res.zip"
 
 echo "== Java"
 "${JAVA_BIN}javac" --release 17 -classpath "$PLATFORM" -d "$OUT/classes" -Xlint:all,-options -Werror \
@@ -67,19 +86,29 @@ echo "== Java"
 "$BUILD_TOOLS/d8" --release --min-api $MIN_API --lib "$PLATFORM" --output "$OUT/apk" \
     $(find "$OUT/classes" -name '*.class')
 
-echo "== APK"
+echo "== APK ($VERSION, version code $CODE)"
 cp "$OUT/base.apk" "$OUT/unaligned.apk"
 (cd "$OUT/apk" && zip -q -r "$OUT/unaligned.apk" classes.dex lib)
 "$BUILD_TOOLS/zipalign" -f -P 16 4 "$OUT/unaligned.apk" "$OUT/aligned.apk"
-# Android Studio's debug key, made the same way if it isn't there yet: good
-# for testing, not for publishing.
-KEYSTORE=$HOME/.android/debug.keystore
-if [ ! -f "$KEYSTORE" ]; then
-    mkdir -p "$HOME/.android"
-    "${JAVA_BIN}keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
-        -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+if [ -n "${POSSUM_KEYSTORE:-}" ]; then
+    # The release key: every release must be signed with the same one, or
+    # phones refuse it as an update.
+    [ -f "$POSSUM_KEYSTORE" ] || fail "no keystore at $POSSUM_KEYSTORE"
+    [ -n "${POSSUM_KEYSTORE_PASSWORD:-}" ] || fail "POSSUM_KEYSTORE needs POSSUM_KEYSTORE_PASSWORD"
+    echo "signing with the key in $POSSUM_KEYSTORE"
+    "$BUILD_TOOLS/apksigner" sign --ks "$POSSUM_KEYSTORE" --ks-pass env:POSSUM_KEYSTORE_PASSWORD \
+        --ks-key-alias "${POSSUM_KEY_ALIAS:-possum}" --out "$APK" "$OUT/aligned.apk"
+else
+    # Android Studio's debug key, made the same way if it isn't there yet:
+    # good for testing, not for publishing.
+    KEYSTORE=$HOME/.android/debug.keystore
+    if [ ! -f "$KEYSTORE" ]; then
+        mkdir -p "$HOME/.android"
+        "${JAVA_BIN}keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
+            -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+    fi
+    "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+        --ks-key-alias androiddebugkey --out "$APK" "$OUT/aligned.apk"
 fi
-"$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-    --ks-key-alias androiddebugkey --out "$APK" "$OUT/aligned.apk"
 "$BUILD_TOOLS/apksigner" verify "$APK"
 echo "Built $APK"

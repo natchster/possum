@@ -13,6 +13,7 @@
 #   possum-<v>-linux-<arch>.tar.gz       x86_64 and aarch64, any distribution
 #   possum_<v>_<arch>.deb                Ubuntu, Debian (amd64, arm64)
 #   possum-<v>-1.<arch>.rpm              Fedora (x86_64, aarch64)
+#   Possum-<v>-android.apk               Android 12+ phones and tablets, DeX
 name: Release
 
 on:
@@ -183,6 +184,58 @@ jobs:
           archive: false
           if-no-files-found: error
 
+  android:
+    name: build Android
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      POSSUM_VERSION: ${{ needs.version.outputs.version }}
+    outputs:
+      key: ${{ steps.build.outputs.key }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Android SDK parts and Rust targets
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-36" "build-tools;36.1.0" "ndk;29.0.14206865" > /dev/null
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Build the APK
+        id: build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        # Every release must be signed with the same key, or phones won't
+        # install it over the one before: the key is in the repository's
+        # secrets (see "Android" under Release builds in the guide).
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            export POSSUM_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD
+            echo "key=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK is signed with a key made for this build only"
+            export POSSUM_KEYSTORE_PASSWORD=$(openssl rand -hex 16)
+            keytool -genkeypair -storetype PKCS12 -keystore "$RUNNER_TEMP/release.p12" \
+              -storepass "$POSSUM_KEYSTORE_PASSWORD" -alias possum -keyalg RSA -keysize 4096 \
+              -validity 36500 -dname "CN=Possum (this build only)"
+            echo "key=one-off" >> "$GITHUB_OUTPUT"
+          fi
+          POSSUM_KEYSTORE=$RUNNER_TEMP/release.p12 ./android/build.sh
+          rm "$RUNNER_TEMP/release.p12"
+      - name: Check the APK
+        run: |
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$tools/aapt2" dump badging dist/*.apk | head -4
+          "$tools/apksigner" verify --print-certs dist/*.apk
+          # Aligned for phones with 16 KB memory pages.
+          "$tools/zipalign" -c -P 16 4 dist/*.apk
+          unzip -l dist/*.apk | grep -E 'lib/(arm64-v8a|x86_64)/libpossum.so'
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/Possum-*-android.apk
+          archive: false
+          if-no-files-found: error
+
   # ------------------------------------- install and run on clean machines
 
   macos-check:
@@ -340,17 +393,61 @@ jobs:
             *.png
             *.log
 
+  android-check:
+    name: run Android ${{ matrix.android }} on an emulator
+    needs: android
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Android it runs on, and the newest.
+        include:
+          - { android: 12, api: 31 }
+          - { android: 16, api: 36 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: Possum-*-android.apk
+          path: download
+          merge-multiple: true
+          skip-decompress: true
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install it, run it and take screenshots
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: .github/scripts/android-screenshots.sh download/Possum-*-android.apk
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-android-${{ matrix.android }}
+          path: |
+            *.png
+            *.log
+
   # ------------------------------------------------------------- release
 
   release:
     name: publish release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [version, macos-check, windows-check, linux-check]
+    needs: [version, android, macos-check, windows-check, linux-check, android-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      ANDROID_KEY: ${{ needs.android.outputs.key }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -374,8 +471,8 @@ jobs:
       - name: Write the release notes
         run: |
           files=$(ls dist)
-          # All nine, or no release.
-          [ "$(echo "$files" | wc -l)" -eq 9 ] || { echo "error: expected 9 files, got:" >&2; echo "$files" >&2; exit 1; }
+          # All ten, or no release.
+          [ "$(echo "$files" | wc -l)" -eq 10 ] || { echo "error: expected 10 files, got:" >&2; echo "$files" >&2; exit 1; }
           pick() { echo "$files" | grep -E "$1"; }
           previous=$(git tag -l 'v*' --sort=-v:refname | head -1)
           {
@@ -389,11 +486,18 @@ jobs:
             echo "| Ubuntu, Debian | \`$(pick 'amd64\.deb')\`, \`$(pick 'arm64\.deb')\` |"
             echo "| Fedora | \`$(pick 'x86_64\.rpm')\`, \`$(pick 'aarch64\.rpm')\` |"
             echo "| Any Linux (glibc 2.39+) | \`$(pick 'x86_64\.tar')\`, \`$(pick 'aarch64\.tar')\` |"
+            echo "| Android 12+ phones and tablets, Samsung DeX | \`$(pick 'android\.apk')\` |"
             echo
             echo "They aren't signed by Apple or Microsoft, so the first start needs one extra"
-            echo "click: see [Download](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#download)"
-            echo "in the guide. Every file was installed and run on clean machines before this"
-            echo "release was published."
+            echo "click, and the Android app installs from the file rather than from Google Play:"
+            echo "see [Download](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/GUIDE.md#download)"
+            echo "in the guide. Every file was installed and run on clean machines (and Android"
+            echo "emulators) before this release was published."
+            if [ "$ANDROID_KEY" = one-off ]; then
+              echo
+              echo "This release's Android app is signed with a key of its own: to install it over"
+              echo "an earlier one, uninstall that first."
+            fi
             echo
             echo "## Changes"
             echo

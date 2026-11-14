@@ -1,6 +1,6 @@
-# Builds and tests Possum on macOS, Windows and the newest releases of the
-# three most popular Linux distributions, then runs the real app on a
-# (virtual) screen and keeps screenshots and logs as artifacts.
+# Builds and tests Possum on macOS, Windows, the newest releases of the
+# three most popular Linux distributions and Android, then runs the real app
+# on a (virtual) screen and keeps screenshots and logs as artifacts.
 name: CI
 
 on:
@@ -107,6 +107,47 @@ jobs:
         if: always()
         with:
           name: ${{ matrix.name }}
+          path: |
+            *.png
+            *.log
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Android SDK parts and Rust targets
+        # The runner has the SDK and JDK 17; these make sure of the parts
+        # android/build.sh uses.
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-36" "build-tools;36.1.0" "ndk;29.0.14206865" > /dev/null
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Lint
+        run: |
+          cargo clippy --manifest-path android/Cargo.toml --all-targets
+          cargo clippy --manifest-path android/Cargo.toml --lib --target aarch64-linux-android
+      - name: Test
+        run: cargo test --manifest-path android/Cargo.toml
+      - name: Build the APK
+        run: ./android/build.sh
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run it on an Android 16 emulator and take screenshots
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: .github/scripts/android-screenshots.sh dist/Possum-*-android.apk
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android
           path: |
             *.png
             *.log
