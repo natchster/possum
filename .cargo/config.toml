@@ -1,4 +1,6 @@
 # Windows: link the C runtime into possum.exe, so it runs on a fresh Windows
-# install without the Visual C++ Redistributable.
+# install without the Visual C++ Redistributable. And don't warn that
+# Microsoft's runtime comes without its debug files (.pdb, warning LNK4099),
+# as it does when cross-building with cargo-xwin (see windows-test.sh).
 [target.'cfg(all(windows, target_env = "msvc"))']
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099"]

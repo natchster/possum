@@ -581,6 +581,37 @@ Xwayland crash above. Run there, it was checked that:
   for GNOME to set XWayland's primary output, which it does right after
   redirecting windows.
 
+### Testing the Windows version on a Mac or Linux
+
+```sh
+./windows-test.sh
+```
+
+builds the same `possum.exe` that releases ship (x86_64, Microsoft's C
+runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin),
+runs the tests under [Wine](https://www.winehq.org), then runs the app for 10
+seconds and saves its log and a screenshot of the whole screen in
+`target/`. `--tests` runs only the tests, `--app 30` only the app (for 30
+seconds), and `--sound` lets it scream out loud.
+
+The first run sets everything up in a cache folder (about 2.5 GB; nothing
+system-wide, no `sudo`): cargo-xwin, Microsoft's C runtime and Windows SDK
+(which means accepting [Microsoft's licence](https://go.microsoft.com/fwlink/?LinkId=2086102)
+for them), and on a Mac, WineHQ's macOS build of Wine (Homebrew's Wine
+packages are disabled because they don't pass Gatekeeper). On Linux, install
+Wine from your distribution.
+
+Under Wine on a Mac, the possum runs over the desktop, cut cleanly to its
+outline, screams on time, and shows speech bubbles; its tray icon appears in
+the menu bar, and its menu (which opens at the screen's top-left corner)
+works down to **Quit Possum**. But Wine isn't Windows: the Dock and the menu
+bar stay above the possum, and locking the Mac isn't locking Windows, so
+keeping quiet while locked isn't tested here. CI's Windows jobs remain the
+real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
+already warns that this Wine won't open on macOS 28.
+
+### Your own Linux VM
+
 To set up your own: boot a cloud image of your distribution with
 `qemu-system-aarch64 -machine virt,accel=hvf` (or `accel=kvm` on Linux) and
 a `virtio-gpu-pci` display, install a desktop with cloud-init, and take
