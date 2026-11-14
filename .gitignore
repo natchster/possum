@@ -6,3 +6,6 @@ opossumeme.webp
 
 # Local Linux VM for testing (QEMU): scripts, disk images, keys. Never tracked.
 /.vm/
+
+# Build output of the tools (windows-test.sh builds them into target/)
+/tools/*/target

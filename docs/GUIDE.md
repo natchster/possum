@@ -592,7 +592,11 @@ runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin)
 and zips it like a release (`dist/possum-<version>-windows-x86_64.zip`),
 runs the tests under [Wine](https://www.winehq.org), then runs the app for 10
 seconds and saves its log and a screenshot of the whole screen in
-`target/`. `--tests` runs only the tests, `--app 30` only the app (for 30
+`target/`. Then it tries the tray menu: it opens it, closes it with a second
+click on the icon, chooses **Scream Now**, and quits with **Quit Possum**,
+all through the messages Windows would send (a small helper,
+[`tools/wine-driver`](../tools/wine-driver/src/main.rs), posts them from
+inside Wine), so your own mouse and keyboard are left alone. `--tests` runs only the tests, `--app 30` only the app (for 30
 seconds), and `--sound` lets it scream out loud.
 
 The first run sets everything up in a cache folder (about 2.5 GB; nothing
@@ -605,10 +609,15 @@ Wine from your distribution.
 Under Wine on a Mac, the possum runs over the desktop, cut cleanly to its
 outline, screams on time, and shows speech bubbles; its tray icon appears in
 the menu bar, and its menu opens under it and works down to **Quit
-Possum**. But Wine isn't Windows: the Dock and the menu
-bar stay above the possum, and locking the Mac isn't locking Windows, so
-keeping quiet while locked isn't tested here. CI's Windows jobs remain the
-real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
+Possum**. Its icon in the Dock is Possum's own: `possum.exe` carries it
+(drawn from the same sprite by `build.rs`), and Windows shows it for the
+file too. But Wine isn't Windows. The menu bar and the Dock stay above every
+app's windows, and macOS moves any window reaching above the menu bar down
+below it; so Possum, which recognises Wine on a Mac, runs around the space
+between them instead of the whole screen. A click outside Wine's windows
+doesn't reach Wine, so it can't close the menu: a second click on the icon
+does. And locking the Mac isn't locking Windows, so keeping quiet while
+locked isn't tested here. CI's Windows jobs remain the real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
 already warns that this Wine won't open on macOS 28.
 
 The same `possum.exe` was also run under Wine on Linux: **Wine 10.0** (the
@@ -620,7 +629,10 @@ Wine 11 needs a newer box64 than Ubuntu's 0.3.8. There, all 50 tests pass;
 the possum runs around the screen through XWayland, cut to its outline; its
 tray icon shows in GNOME's top bar (through the AppIndicator extension),
 and the menu opens under it and quits; and it plays its screams through
-PipeWire.
+PipeWire. Ubuntu's box64 (0.3.8) sometimes stops one of Wine's own
+processes with an "illegal instruction", even while Wine sets up its
+prefix: if Wine then says it can't load `kernel32.dll`, delete the prefix
+and let Wine make it again.
 
 ### Your own Linux VM
 

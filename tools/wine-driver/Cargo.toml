@@ -1,0 +1,15 @@
+[package]
+name = "possum-wine-driver"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+description = "Drives Possum's tray menu from inside Wine or Windows, for windows-test.sh."
+license-file = "../../LICENSE"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61"
+features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"]

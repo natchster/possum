@@ -32,6 +32,13 @@ impl Image {
         Self { w, h, bgra }
     }
 
+    /// The image without its top `rows` rows.
+    #[cfg_attr(not(windows), expect(dead_code))]
+    pub fn without_top_rows(&self, rows: usize) -> Image {
+        let rows = rows.min(self.h);
+        Image { w: self.w, h: self.h - rows, bgra: self.bgra[rows * self.w * 4..].to_vec() }
+    }
+
     /// The opaque pixels as horizontal runs `(x, y, width)`, one row at a
     /// time: the shape of a window that shows exactly this image (Linux
     /// cuts its windows to this shape instead of blending alpha).

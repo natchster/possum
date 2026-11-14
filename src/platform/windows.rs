@@ -15,10 +15,10 @@
 //!   Mac at 100% scaling, bigger at 125%, 150%...
 
 use std::cell::RefCell;
-use std::ffi::c_void;
+use std::ffi::{CStr, c_char, c_void};
 use std::ptr::{null, null_mut};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
@@ -32,7 +32,7 @@ use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_WRITE, OPE
 use windows_sys::Win32::System::Console::{
     ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
 };
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Power::{POWERBROADCAST_SETTING, RegisterPowerSettingNotification};
 use windows_sys::Win32::System::RemoteDesktop::{NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification};
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, DESKTOP_SWITCHDESKTOP, OpenInputDesktop};
@@ -46,8 +46,8 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
-    DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, GetCursorPos, GetMessageW,
-    HICON, HWND_TOPMOST, ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
+    DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, EndMenu, GetCursorPos,
+    GetMessageW, HICON, HWND_TOPMOST, ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
     PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostMessageW,
     PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SPI_GETSCREENSAVERRUNNING, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
@@ -141,6 +141,12 @@ pub fn run(opts: &Options) {
     let mut brain = Brain::new(&settings, screen.w, screen.h, durations, rng);
     brain.update(sounds.probe());
     brain.log(format_args!("running around the primary display, {}x{} pixels", screen.w, screen.h));
+    if let Some(host) = wine_host_system() {
+        brain.log(format_args!("running under Wine on {host}"));
+    }
+    if wine_on_mac() {
+        brain.log(format_args!("keeping below the Mac's menu bar and above its Dock"));
+    }
 
     // SAFETY: standard window-class registration and window creation.
     let (main, possum, bubble) = unsafe {
@@ -240,19 +246,46 @@ pub fn run(opts: &Options) {
 }
 
 /// The primary monitor's frame in virtual-screen pixels (y-down), and its
-/// display scaling (1.0 at 100%).
+/// display scaling (1.0 at 100%). Under Wine on a Mac, just the part between
+/// the menu bar and the Dock (see `wine_on_mac`).
 fn primary_monitor() -> (screens::Rect, f64) {
     // SAFETY: plain Win32 queries with valid out-pointers.
     unsafe {
         let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
         let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         GetMonitorInfoW(monitor, &mut info);
-        let r = info.rcMonitor;
+        let r = if wine_on_mac() { info.rcWork } else { info.rcMonitor };
         let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
         GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
         let rect =
             screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
         (rect, dpi_x.max(96) as f64 / 96.0)
+    }
+}
+
+/// Whether Possum runs under Wine on a Mac. There, macOS moves any window
+/// that reaches above the menu bar down below it, and keeps the menu bar and
+/// the Dock above every app's windows: so the possum runs around the space
+/// between them (Wine's work area) and its windows never reach above it.
+fn wine_on_mac() -> bool {
+    static ON_MAC: OnceLock<bool> = OnceLock::new();
+    *ON_MAC.get_or_init(|| wine_host_system().as_deref() == Some("Darwin"))
+}
+
+/// The system Wine runs on ("Darwin" for macOS, "Linux"...), or None on
+/// Windows itself: only Wine's ntdll.dll has `wine_get_host_version`.
+fn wine_host_system() -> Option<String> {
+    type HostVersion = unsafe extern "C" fn(sysname: *mut *const c_char, release: *mut *const c_char);
+    // SAFETY: ntdll.dll is loaded in every process; when it exports
+    // wine_get_host_version, it is Wine's, with this signature, and it
+    // returns static strings.
+    unsafe {
+        let ntdll = GetModuleHandleW(wide("ntdll.dll").as_ptr());
+        let found = GetProcAddress(ntdll, c"wine_get_host_version".as_ptr().cast())?;
+        let host_version = std::mem::transmute::<unsafe extern "system" fn() -> isize, HostVersion>(found);
+        let (mut sysname, mut release) = (null(), null());
+        host_version(&mut sysname, &mut release);
+        (!sysname.is_null()).then(|| CStr::from_ptr(sysname).to_string_lossy().into_owned())
     }
 }
 
@@ -273,15 +306,25 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_TRAY => {
             let event = (lparam & 0xFFFF) as u32;
-            if TRAY_VERSION_4.load(Ordering::Relaxed) {
-                // A click (or the menu key) on the icon, and where the icon
-                // is: x and y in the two halves of wparam.
-                if matches!(event, NIN_SELECT | WM_CONTEXTMENU) {
-                    let at = POINT { x: (wparam & 0xFFFF) as i16 as i32, y: ((wparam >> 16) & 0xFFFF) as i16 as i32 };
-                    show_menu(hwnd, Some(at));
-                }
-            } else if matches!(event, WM_RBUTTONUP | WM_LBUTTONUP) {
-                show_menu(hwnd, None);
+            // A click (or the menu key) on the icon. With version 4, where the
+            // icon is comes along: x and y in the two halves of wparam.
+            let click = if TRAY_VERSION_4.load(Ordering::Relaxed) {
+                let at = POINT { x: (wparam & 0xFFFF) as i16 as i32, y: ((wparam >> 16) & 0xFFFF) as i16 as i32 };
+                matches!(event, NIN_SELECT | WM_CONTEXTMENU).then_some(Some(at))
+            } else {
+                matches!(event, WM_RBUTTONUP | WM_LBUTTONUP).then_some(None)
+            };
+            match click {
+                // Clicked again while the menu is open (its modal loop calls
+                // us): close it, as a menu-bar menu would. On Windows a click
+                // outside closes it anyway; under Wine on a Mac, a click
+                // outside Wine's windows doesn't, and this is the way out.
+                // SAFETY: closes the menu this thread has open.
+                Some(_) if MENU_OPEN.load(Ordering::Relaxed) => unsafe {
+                    EndMenu();
+                },
+                Some(at) => show_menu(hwnd, at),
+                None => {}
             }
             0
         }
@@ -356,6 +399,9 @@ fn tray_data(main: HWND) -> NOTIFYICONDATAW {
     data.uID = 1;
     data
 }
+
+/// Whether the menu is open (`show_menu` is waiting in TrackPopupMenu).
+static MENU_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// Whether the notification area speaks version 4 of its protocol to us
 /// (`Tray::show`): then clicks come with the icon's position.
@@ -516,7 +562,9 @@ fn show_menu(main: HWND, at: Option<POINT>) {
         });
         // Without this, the menu wouldn't close when clicking elsewhere.
         SetForegroundWindow(main);
+        MENU_OPEN.store(true, Ordering::Relaxed);
         let choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, main, null());
+        MENU_OPEN.store(false, Ordering::Relaxed);
         PostMessageW(main, WM_NULL, 0, 0);
         DestroyMenu(menu);
         match choice as usize {
@@ -676,7 +724,8 @@ struct App {
     clock: Instant,
     possum: Layered,
     bubble: Layered,
-    possum_key: Option<(bool, usize, Option<usize>, u64)>,
+    /// The picture last drawn: scene parts, and rows left out at the top.
+    possum_key: Option<(bool, usize, Option<usize>, u64, usize)>,
     bubble_key: Option<(Kind, usize, usize)>,
 }
 
@@ -712,13 +761,17 @@ impl App {
         let s = self.screen;
         let (paws_x, paws_y) = (s.x + scene.x, s.y + s.h - scene.y);
         let (x, y) = ((paws_x - self.reach as f64) as i32, (paws_y - self.reach as f64) as i32);
-        let key = (scene.screaming, scene.frame, scene.yell, scene.heading.to_bits());
+        // The possum's square reaches above the paws; under Wine on a Mac
+        // the window mustn't reach above the track (see `wine_on_mac`), so
+        // the rows up there (empty, along the top) are left out.
+        let crop = if wine_on_mac() { (s.y as i32 - y).clamp(0, 2 * self.reach as i32) as usize } else { 0 };
+        let key = (scene.screaming, scene.frame, scene.yell, scene.heading.to_bits(), crop);
         if self.possum_key != Some(key) {
             self.possum_key = Some(key);
             let img = render::rotated(self.art.possum(scene), self.scale, scene.heading, self.reach);
-            self.possum.show(&img, x, y);
+            self.possum.show(&img.without_top_rows(crop), x, y + crop as i32);
         } else {
-            self.possum.move_to(x, y);
+            self.possum.move_to(x, y + crop as i32);
         }
 
         match scene.bubble {

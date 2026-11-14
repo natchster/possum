@@ -4,7 +4,9 @@
 # releases build, zipped like a release's in
 # dist/possum-<version>-windows-x86_64.zip.
 #
-#   ./windows-test.sh              the tests, then the app for 10 seconds
+#   ./windows-test.sh              the tests, then the app for 10 seconds and
+#                                  its tray menu (driven from inside Wine:
+#                                  your mouse and keyboard are left alone)
 #   ./windows-test.sh --tests      only the tests
 #   ./windows-test.sh --app [N]    only the app, for N seconds (default 10)
 #   ./windows-test.sh --sound      ...with sound (it screams silently, in
@@ -12,9 +14,9 @@
 #
 # Wine isn't Windows. Possum's own code runs for real (the brain, drawing,
 # sound, the Win32 calls it makes), but what's around it is Wine's version,
-# shown through macOS: the possum runs over the desktop, its tray icon is in
-# the menu bar and opens the menu (at the screen's top-left corner), but the
-# Dock and menu bar stay above it, and locking the Mac isn't locking Windows.
+# shown through macOS: Possum sees it's on a Mac and runs between the menu
+# bar and the Dock (which stay above every app), its tray icon is in the
+# menu bar, and locking the Mac isn't locking Windows.
 # CI's Windows jobs remain the real check. And Wine for the Mac runs Intel
 # code through Rosetta 2: macOS 27 warns this Wine won't open on macOS 28.
 #
@@ -129,6 +131,11 @@ if [ $app = 1 ]; then
     rm -f "$zip"
     zip -q -j "$zip" "$EXE" LICENSE README.md
     echo "built $zip"
+    step "Building the menu driver (tools/wine-driver)"
+    cargo xwin build --release --target "$TARGET" --target-dir target/wine-driver \
+        --manifest-path tools/wine-driver/Cargo.toml
+    driver=target/wine-driver/$TARGET/release/possum-wine-driver.exe
+
     step "Running it for $seconds seconds"
     log=target/windows-test.log
     shot=target/windows-test.png
@@ -141,6 +148,20 @@ if [ $app = 1 ]; then
     [ $sound = 1 ] || args+=(--silent)
     wine "$EXE" "${args[@]}" >"$log" 2>&1 &
     pid=$!
+    stopped() { ! kill -0 $pid 2>/dev/null; }
+    finish() {
+        wineserver -k 2>/dev/null || true
+        wait $pid 2>/dev/null || true
+        echo "log: $log"
+        sed 's/^/  /' "$log"
+        [ -z "${1:-}" ] || fail "$1"
+    }
+    for _ in $(seq 60); do
+        grep -q "notification area" "$log" && break
+        stopped && finish "possum.exe stopped by itself while starting"
+        sleep 0.5
+    done
+    grep -q "running around" "$log" || finish "possum.exe didn't start running around within 30 seconds"
     sleep $((seconds / 2))
     if [ "$(uname -s)" = Darwin ]; then
         screencapture -x "$shot" && echo "screenshot: $shot"
@@ -148,13 +169,33 @@ if [ $app = 1 ]; then
         import -window root "$shot" && echo "screenshot: $shot"
     fi
     sleep $((seconds - seconds / 2))
-    alive=0
-    kill -0 $pid 2>/dev/null && alive=1
-    wineserver -k 2>/dev/null || true
-    wait $pid 2>/dev/null || true
-    echo "log: $log"
-    sed 's/^/  /' "$log"
-    [ $alive = 1 ] || fail "possum.exe stopped by itself within $seconds seconds"
-    grep -q "running around" "$log" || fail "possum.exe ran, but never started running around"
-    echo "possum.exe ran for $seconds seconds."
+    stopped && finish "possum.exe stopped by itself within $seconds seconds"
+
+    # The menu, through the messages a click on the tray icon and keys in
+    # the menu bring (tools/wine-driver): the real mouse and keyboard are
+    # left alone. The icon's place is made up: the menu opens there.
+    step "The menu"
+    drive() {
+        local out status
+        out=$(wine "$driver" "$@" 2>&1)
+        status=$?
+        [ -z "$out" ] || echo "$out" | sed 's/^/  /'
+        return $status
+    }
+    screams() { grep -c "possum \[.*s\] \(AAAA\|hiss\)" "$log" || true; }
+    drive click 400 300 wait 800 menu open || finish "clicking the tray icon didn't open the menu"
+    echo "clicking the icon opens the menu"
+    drive click 400 300 wait 800 menu closed || finish "clicking the icon again didn't close the menu"
+    echo "clicking it again closes it"
+    before=$(screams)
+    # From the bottom: Quit Possum, then Scream Now.
+    drive click 400 300 wait 800 key up up enter wait 600 || finish "couldn't choose Scream Now"
+    [ "$(screams)" -gt "$before" ] || finish "Scream Now didn't start a scream"
+    echo "Scream Now screams"
+    drive click 400 300 wait 800 key up enter || finish "couldn't choose Quit Possum"
+    for _ in $(seq 20); do stopped && break; sleep 0.25; done
+    stopped || finish "Quit Possum didn't quit"
+    echo "Quit Possum quits"
+    finish
+    echo "possum.exe ran for $seconds seconds, and its menu works."
 fi
