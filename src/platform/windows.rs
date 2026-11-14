@@ -82,6 +82,18 @@ static DISPLAYS_CHANGED: AtomicBool = AtomicBool::new(false);
 /// changes). The notification area starts out empty then.
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
+/// --verbose also traces the sounds, the tray and its menu, and late
+/// frames, on the brain's clock: to tell where it stopped if it ever hangs.
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+static CLOCK: OnceLock<Instant> = OnceLock::new();
+
+fn trace(what: std::fmt::Arguments) {
+    if VERBOSE.load(Ordering::Relaxed) {
+        let now = CLOCK.get_or_init(Instant::now).elapsed().as_secs_f64();
+        eprintln!("possum [{now:8.2}s] {what}");
+    }
+}
+
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
@@ -121,6 +133,7 @@ pub fn prepare_console() {
 }
 
 pub fn run(opts: &Options) {
+    VERBOSE.store(opts.verbose, Ordering::Relaxed);
     // SAFETY: called once, before any window exists.
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     // SAFETY: registering (or looking up) a message by its name.
@@ -219,7 +232,8 @@ pub fn run(opts: &Options) {
             screen,
             scale,
             reach,
-            clock: Instant::now(),
+            clock: *CLOCK.get_or_init(Instant::now),
+            last_tick: None,
             possum: Layered::new(possum),
             bubble: Layered::new(bubble),
             possum_key: None,
@@ -306,6 +320,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_TRAY => {
             let event = (lparam & 0xFFFF) as u32;
+            trace(format_args!("tray: event {event:#x}, wparam {wparam:#x}"));
             // A click (or the menu key) on the icon. With version 4, where the
             // icon is comes along: x and y in the two halves of wparam.
             let click = if TRAY_VERSION_4.load(Ordering::Relaxed) {
@@ -321,6 +336,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 // outside Wine's windows doesn't, and this is the way out.
                 // SAFETY: closes the menu this thread has open.
                 Some(_) if MENU_OPEN.load(Ordering::Relaxed) => unsafe {
+                    trace(format_args!("menu: clicked again, closing it"));
                     EndMenu();
                 },
                 Some(at) => show_menu(hwnd, at),
@@ -563,7 +579,9 @@ fn show_menu(main: HWND, at: Option<POINT>) {
         // Without this, the menu wouldn't close when clicking elsewhere.
         SetForegroundWindow(main);
         MENU_OPEN.store(true, Ordering::Relaxed);
+        trace(format_args!("menu: opening at {},{}", at.x, at.y));
         let choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, main, null());
+        trace(format_args!("menu: closed, choice {choice}"));
         MENU_OPEN.store(false, Ordering::Relaxed);
         PostMessageW(main, WM_NULL, 0, 0);
         DestroyMenu(menu);
@@ -676,14 +694,22 @@ struct Sounds([Vec<Vec<u8>>; 2]);
 impl Host for Sounds {
     fn play(&mut self, kind: Kind, variant: usize) -> bool {
         let wav = &self.0[brain::kind_index(kind)][variant];
+        trace(format_args!("sound: starting {kind:?} {variant}"));
+        let start = Instant::now();
         // SAFETY: with SND_MEMORY the "name" is the WAV data, which lives as
         // long as the app (PlaySound reads it while playing).
-        unsafe { PlaySoundW(wav.as_ptr().cast(), null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT) != 0 }
+        let played =
+            unsafe { PlaySoundW(wav.as_ptr().cast(), null_mut(), SND_MEMORY | SND_ASYNC | SND_NODEFAULT) != 0 };
+        trace(format_args!("sound: started ({played}) in {} ms", start.elapsed().as_millis()));
+        played
     }
 
     fn hush(&mut self) {
+        trace(format_args!("sound: stopping"));
+        let start = Instant::now();
         // SAFETY: a null sound stops whatever is playing.
         unsafe { PlaySoundW(null(), null_mut(), 0) };
+        trace(format_args!("sound: stopped in {} ms", start.elapsed().as_millis()));
     }
 
     fn probe(&mut self) -> quiet::Probe {
@@ -722,6 +748,8 @@ struct App {
     scale: f64,
     reach: usize,
     clock: Instant,
+    /// When the last frame came (for the late-frame trace).
+    last_tick: Option<Instant>,
     possum: Layered,
     bubble: Layered,
     /// The picture last drawn: scene parts, and rows left out at the top.
@@ -731,6 +759,12 @@ struct App {
 
 impl App {
     fn tick(&mut self) {
+        let tick = Instant::now();
+        if let Some(last) = self.last_tick.replace(tick)
+            && tick - last > Duration::from_millis(250)
+        {
+            trace(format_args!("frame {} ms late", (tick - last).as_millis() - 16));
+        }
         let now = self.clock.elapsed().as_secs_f64();
         let events = std::mem::take(&mut *SYSTEM_EVENTS.lock().unwrap_or_else(|e| e.into_inner()));
         for event in events {

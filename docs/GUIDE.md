@@ -620,6 +620,16 @@ does. And locking the Mac isn't locking Windows, so keeping quiet while
 locked isn't tested here. CI's Windows jobs remain the real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
 already warns that this Wine won't open on macOS 28.
 
+To just run the Windows version on a Mac, use `./windows-test.sh --run` (or
+`wine possum.exe` in a terminal): it runs until you choose **Quit Possum**,
+logging to `target/windows-run.log`. Don't double-click `possum.exe` in the
+Finder: that starts it through the "Wine Devel" app, which stays in the Dock
+with Wine's icon, and when that app quits, macOS ends the Wine processes it
+started, Wine's server among them. Possum can't go on without it: it
+freezes where it is, menu and all, until it's force-quit. With `--verbose`
+the Windows version also logs its sounds, clicks on its tray icon, its menu,
+and any frame that comes late, so a log shows where it stopped.
+
 The same `possum.exe` was also run under Wine on Linux: **Wine 10.0** (the
 version Ubuntu 26.04 and Debian 13 package) in the ARM64 Ubuntu 26.04 VM
 above, with GNOME on Wayland. An ARM64 Linux runs x86-64 Wine through

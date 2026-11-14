@@ -11,6 +11,14 @@
 #   ./windows-test.sh --app [N]    only the app, for N seconds (default 10)
 #   ./windows-test.sh --sound      ...with sound (it screams silently, in
 #                                  speech bubbles, unless asked)
+#   ./windows-test.sh --run        build it and just run it, as it is, until
+#                                  you choose Quit Possum (log in
+#                                  target/windows-run.log)
+#
+# On a Mac, run it like this (or with `wine possum.exe` in a terminal) rather
+# than by double-clicking possum.exe in the Finder: that starts it through
+# the "Wine Devel" app (in the Dock with Wine's icon), and when that app
+# quits, Wine's background processes go with it and Possum freezes.
 #
 # Wine isn't Windows. Possum's own code runs for real (the brain, drawing,
 # sound, the Win32 calls it makes), but what's around it is Wine's version,
@@ -36,10 +44,11 @@ WINE_VERSION=11.21
 WINE_SHA256=9909b486657e10ab66c7279371ae1f990345b596b3b1b3a0cf21f28af24fa0ce
 EXE=target/$TARGET/release/possum.exe
 
-tests=1 app=1 seconds=10 sound=0
+tests=1 app=1 seconds=10 sound=0 run=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --tests) app=0 ;;
+        --run) run=1 tests=0 app=0 ;;
         --app)
             tests=0
             if [[ ${2:-} =~ ^[0-9]+$ ]]; then seconds=$2; shift; fi
@@ -104,6 +113,20 @@ if [ ! -f "$WINEPREFIX/system.reg" ]; then
     step "Creating the Wine prefix (once; takes a minute)"
     wine wineboot --init >/dev/null 2>&1
     wineserver -w
+fi
+
+# ---------------------------------------------------------------------------
+# Just run it
+
+if [ $run = 1 ]; then
+    step "Building possum.exe"
+    cargo xwin build --release --target "$TARGET"
+    log=target/windows-run.log
+    wine cmd /c ver >/dev/null 2>&1
+    # In its own session, so it outlives this script and the terminal.
+    nohup wine "$EXE" --verbose >"$log" 2>&1 </dev/null &
+    echo "possum.exe is running (log: $log). Quit it from its menu."
+    exit 0
 fi
 
 # ---------------------------------------------------------------------------
