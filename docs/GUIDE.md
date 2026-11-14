@@ -588,7 +588,8 @@ Xwayland crash above. Run there, it was checked that:
 ```
 
 builds the same `possum.exe` that releases ship (x86_64, Microsoft's C
-runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin),
+runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin)
+and zips it like a release (`dist/possum-<version>-windows-x86_64.zip`),
 runs the tests under [Wine](https://www.winehq.org), then runs the app for 10
 seconds and saves its log and a screenshot of the whole screen in
 `target/`. `--tests` runs only the tests, `--app 30` only the app (for 30
@@ -603,12 +604,23 @@ Wine from your distribution.
 
 Under Wine on a Mac, the possum runs over the desktop, cut cleanly to its
 outline, screams on time, and shows speech bubbles; its tray icon appears in
-the menu bar, and its menu (which opens at the screen's top-left corner)
-works down to **Quit Possum**. But Wine isn't Windows: the Dock and the menu
+the menu bar, and its menu opens under it and works down to **Quit
+Possum**. But Wine isn't Windows: the Dock and the menu
 bar stay above the possum, and locking the Mac isn't locking Windows, so
 keeping quiet while locked isn't tested here. CI's Windows jobs remain the
 real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
 already warns that this Wine won't open on macOS 28.
+
+The same `possum.exe` was also run under Wine on Linux: **Wine 10.0** (the
+version Ubuntu 26.04 and Debian 13 package) in the ARM64 Ubuntu 26.04 VM
+above, with GNOME on Wayland. An ARM64 Linux runs x86-64 Wine through
+[box64](https://github.com/ptitSeb/box64) (`sudo apt install box64`, and an
+x86-64 Wine build such as [Kron4ek's](https://github.com/Kron4ek/Wine-Builds));
+Wine 11 needs a newer box64 than Ubuntu's 0.3.8. There, all 50 tests pass;
+the possum runs around the screen through XWayland, cut to its outline; its
+tray icon shows in GNOME's top bar (through the AppIndicator extension),
+and the menu opens under it and quits; and it plays its screams through
+PipeWire.
 
 ### Your own Linux VM
 

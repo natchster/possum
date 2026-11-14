@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds the Windows version of Possum on this Mac (or Linux) and runs it
 # under Wine: the same x86_64-pc-windows-msvc possum.exe that CI and
-# releases build.
+# releases build, zipped like a release's in
+# dist/possum-<version>-windows-x86_64.zip.
 #
 #   ./windows-test.sh              the tests, then the app for 10 seconds
 #   ./windows-test.sh --tests      only the tests
@@ -117,12 +118,23 @@ fi
 if [ $app = 1 ]; then
     step "Building possum.exe"
     cargo xwin build --release --target "$TARGET"
+    # As the release checks: the C runtime is linked in (.cargo/config.toml),
+    # so possum.exe runs on a Windows without the Visual C++ Redistributable.
+    if LC_ALL=C grep -a -i -q -E 'vcruntime1|msvcp1|api-ms-win-crt-' "$EXE"; then
+        fail "possum.exe needs the Visual C++ runtime"
+    fi
+    version=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+    zip=dist/possum-${version:-dev}-windows-x86_64.zip
+    mkdir -p dist
+    rm -f "$zip"
+    zip -q -j "$zip" "$EXE" LICENSE README.md
+    echo "built $zip"
     step "Running it for $seconds seconds"
     log=target/windows-test.log
     shot=target/windows-test.png
-    # Start Wine's desktop first: a program that asks about the monitors
-    # while Wine is still starting up waits forever (Windows itself always
-    # has its desktop running before any app starts).
+    # Start Wine first: from cold it takes a while (about 10 seconds on a
+    # Mac) before its desktop answers questions about the monitors, which
+    # possum.exe asks first thing. Then the seconds below are the app's own.
     wine cmd /c ver >/dev/null 2>&1
     # On the right edge, where the Dock and the menu bar aren't.
     args=(--verbose --start 0.4)

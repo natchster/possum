@@ -41,7 +41,8 @@ use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
@@ -272,8 +273,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_TRAY => {
             let event = (lparam & 0xFFFF) as u32;
-            if matches!(event, WM_RBUTTONUP | WM_LBUTTONUP | WM_CONTEXTMENU) {
-                show_menu(hwnd);
+            if TRAY_VERSION_4.load(Ordering::Relaxed) {
+                // A click (or the menu key) on the icon, and where the icon
+                // is: x and y in the two halves of wparam.
+                if matches!(event, NIN_SELECT | WM_CONTEXTMENU) {
+                    let at = POINT { x: (wparam & 0xFFFF) as i16 as i32, y: ((wparam >> 16) & 0xFFFF) as i16 as i32 };
+                    show_menu(hwnd, Some(at));
+                }
+            } else if matches!(event, WM_RBUTTONUP | WM_LBUTTONUP) {
+                show_menu(hwnd, None);
             }
             0
         }
@@ -349,6 +357,10 @@ fn tray_data(main: HWND) -> NOTIFYICONDATAW {
     data
 }
 
+/// Whether the notification area speaks version 4 of its protocol to us
+/// (`Tray::show`): then clicks come with the icon's position.
+static TRAY_VERSION_4: AtomicBool = AtomicBool::new(false);
+
 /// The notification-area icon. Explorer forgets every icon when it restarts
 /// (after a crash, an update, or a restart from Task Manager) and then says
 /// so with "TaskbarCreated"; Possum then adds its icon again. Adding can
@@ -378,13 +390,23 @@ impl Tray {
     /// it. Returns whether it's there now.
     fn show(&mut self) -> bool {
         let mut data = tray_data(self.main);
-        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        // Version 4 hides the tooltip unless asked for (NIF_SHOWTIP).
+        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
         data.uCallbackMessage = WM_TRAY;
         data.hIcon = self.icon;
         let tip = wide("Possum is screaming");
         data.szTip[..tip.len()].copy_from_slice(&tip);
         // SAFETY: `data` is fully initialised for NIM_ADD and NIM_MODIFY.
         let shown = unsafe { Shell_NotifyIconW(NIM_ADD, &data) != 0 || Shell_NotifyIconW(NIM_MODIFY, &data) != 0 };
+        if shown {
+            // Ask for version 4, so a click comes with the icon's position:
+            // the menu then opens at the icon even where the pointer isn't
+            // known (Wine on a Mac, where the icon is in the menu bar).
+            data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            // SAFETY: the same icon, just added; NIM_SETVERSION only reads uVersion.
+            let version_4 = unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) } != 0;
+            TRAY_VERSION_4.store(version_4, Ordering::Relaxed);
+        }
         if self.verbose && shown != self.shown {
             if shown {
                 eprintln!("possum: the tray icon is in the notification area");
@@ -466,7 +488,8 @@ fn icon_from(canvas: &sprite::Canvas, size: usize) -> HICON {
     }
 }
 
-fn show_menu(main: HWND) {
+/// The menu, at `at` (where the icon is), or at the pointer.
+fn show_menu(main: HWND, at: Option<POINT>) {
     let silent = SILENT.load(Ordering::Relaxed);
     // SAFETY: a standard popup menu, destroyed before returning. Nothing
     // here touches the app state, so timer ticks during the menu's modal
@@ -486,8 +509,11 @@ fn show_menu(main: HWND) {
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         add(MF_STRING, MENU_QUIT, "Quit Possum");
 
-        let mut at = POINT { x: 0, y: 0 };
-        GetCursorPos(&mut at);
+        let at = at.unwrap_or_else(|| {
+            let mut pointer = POINT { x: 0, y: 0 };
+            GetCursorPos(&mut pointer);
+            pointer
+        });
         // Without this, the menu wouldn't close when clicking elsewhere.
         SetForegroundWindow(main);
         let choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, main, null());
