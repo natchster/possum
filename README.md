@@ -27,13 +27,28 @@ is marked **Latest**.
 | Ubuntu, Debian | `possum_…_amd64.deb` or `_arm64.deb` |
 | Fedora | `possum-…x86_64.rpm` or `.aarch64.rpm` |
 | Any Linux | `possum-…-linux-x86_64.tar.gz` or `-aarch64.tar.gz` |
+| Android 12+ phones and tablets, Samsung DeX | `Possum-…-android.apk` |
 
 They aren't signed by Apple or Microsoft, so the first start needs one extra
-click: see [Download](docs/GUIDE.md#download) in the guide.
+click, and the Android app installs from the file rather than from Google
+Play: see [Download](docs/GUIDE.md#download) in the guide.
+
+## Possum in your pocket!
+
+No computer around, just a TV or a monitor? Your phone is all the possum
+needs. Plug a Samsung Galaxy phone into any TV or monitor (a USB-C to HDMI
+cable is enough, or connect wirelessly to a TV that supports screen
+mirroring), and Samsung DeX turns that screen into a desktop. Possum moves
+over to it by itself and runs laps around the big screen: in a hotel room,
+at a friend's place, on the meeting-room display. Unplug, and it's back on
+your phone, ready for the next screen. Without DeX, it runs around the
+phone or tablet's own screen. See [Android and Samsung
+DeX](docs/GUIDE.md#possum-in-your-pocket-android-and-samsung-dex) in the
+guide.
 
 ## Build it yourself
 
-Possum runs on **macOS**, **Windows** and **Linux**. You need
+Possum runs on **macOS**, **Windows**, **Linux** and **Android**. You need
 [Rust](https://rustup.rs) (1.100 or newer), then:
 
 **macOS** 11 or later, with the Xcode Command Line Tools
@@ -60,9 +75,18 @@ cargo build --release
 ./target/release/possum
 ```
 
+**Android** (phones, tablets, Samsung DeX), with the Android SDK and NDK
+and a JDK: `./android/build.sh` makes the APK (see
+[android/README.md](android/README.md)).
+
+The Windows version also runs under [Wine](https://www.winehq.org) on a Mac
+or Linux, and `packaging/macos-wine/build.sh` wraps it, Wine and all, into a
+Mac app: see [Wine](docs/GUIDE.md#wine-the-windows-version-on-a-mac-or-linux)
+in the guide. Releases don't include that app.
+
 To quit, click the possum head in the menu bar or tray and choose **Quit
 Possum**. On a Mac, ⌃⌥⌘P opens the same menu, even when the menu bar is too
-full to show the head.
+full to show the head. On Android, the menu is Possum's notification.
 
 **[Read the guide](docs/GUIDE.md)** for everything else: what it does in
 detail, downloading, step-by-step builds for each system, installing, the

@@ -3,11 +3,14 @@
 Everything about Possum in detail. For the short version, see the [README](../README.md).
 
 - [What it does, in detail](#what-it-does-in-detail)
+- [Possum in your pocket! (Android and Samsung DeX)](#possum-in-your-pocket-android-and-samsung-dex)
 - [Requirements](#requirements)
 - [Download](#download)
 - [Build and run on macOS](#build-and-run-on-macos)
 - [Build and run on Windows](#build-and-run-on-windows)
 - [Build and run on Linux](#build-and-run-on-linux)
+- [Build and run on Android](#build-and-run-on-android)
+- [Wine: the Windows version on a Mac or Linux](#wine-the-windows-version-on-a-mac-or-linux)
 - [Installing](#installing)
 - [The menu](#the-menu)
 - [Options](#options)
@@ -37,15 +40,46 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 
 It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme.
 
+## Possum in your pocket! (Android and Samsung DeX)
+
+No computer around, just a TV or a monitor? Your phone is all the possum
+needs. Plug a Samsung Galaxy phone into any TV or monitor (a USB-C to HDMI
+cable or adapter is enough, or connect wirelessly to a TV that supports
+screen mirroring), and Samsung DeX turns that screen into a desktop. Within
+a second, Possum moves over to it by itself and runs laps around the big
+screen, screaming on your behalf: in a hotel room, at a friend's place, on
+the meeting-room display, on the TV at home. Unplug, and it's back on your
+phone, ready for the next screen. No laptop to carry, nothing to install on
+the TV. Android's own desktop mode on a connected display works the same
+way, and on a phone or tablet with no display connected, the possum runs
+around its own screen.
+
+It's the same possum: the Android app runs the very same Rust code for the
+brain, the sprites and the screams, with a small Java app around it.
+
+- **The menu** is Possum's notification: **Scream** / **Scream silently**,
+  **Scream Now** and **Quit Possum**.
+- **Keeping quiet:** besides a locked screen and a display that's off, it
+  screams silently (in speech bubbles) while the phone is on silent, in Do
+  Not Disturb, or in a call.
+- **What Android doesn't allow:** the status bar, the taskbar, the
+  notification shade and the lock screen stay above other apps' windows, so
+  the possum runs inside the system bars rather than over them; and Android
+  only lets taps through another app's window while it's at most 80%
+  opaque, so the possum is drawn very slightly see-through.
+
+Install it from a release (see [Download](#download)); building it and
+everything else is in [android/README.md](../android/README.md).
+
 ## Requirements
 
-| | macOS | Windows | Linux |
-|---|---|---|---|
-| **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work |
-| **Processor** | Apple Silicon or Intel (one universal app) | x86-64; Windows on Arm runs it through its built-in emulation | x86-64 or ARM64 |
-| **To build** | Rust 1.100+ and the Xcode Command Line Tools | Rust 1.100+ and the Visual Studio C++ Build Tools | Rust 1.100+ and `gcc` (as the linker) |
-| **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
-| **Permissions** | None | None | None |
+| | macOS | Windows | Linux | Android |
+|---|---|---|---|---|
+| **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work | Android 12 or later; for a monitor or TV, Samsung DeX or Android's desktop mode |
+| **Processor** | Apple Silicon or Intel (one universal app) | x86-64; Windows on Arm runs it through its built-in emulation (or [build it for ARM64](#windows-on-arm)) | x86-64 or ARM64 | ARM64 (every phone and tablet with DeX), or x86-64 |
+| **To build** | Rust 1.100+ and the Xcode Command Line Tools | Rust 1.100+ and the Visual Studio C++ Build Tools | Rust 1.100+ and `gcc` (as the linker) | Rust 1.100+, the Android SDK and NDK, and JDK 17+ |
+| **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) | Nothing else |
+| **Permissions** | None | None | None | **Appear on top**, and notifications (its menu) |
 
 Possum builds with Rust 1.100, the version in `rust-toolchain.toml`:
 install Rust from [rustup.rs](https://rustup.rs) and `cargo` fetches that
@@ -68,6 +102,7 @@ your system from its **Assets**:
 | `possum_<version>_amd64.deb`, `_arm64.deb` | Ubuntu, Debian and their relatives |
 | `possum-<version>-1.x86_64.rpm`, `.aarch64.rpm` | Fedora and its relatives |
 | `possum-<version>-linux-x86_64.tar.gz`, `-aarch64.tar.gz` | Any Linux with glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+, Fedora 40+) |
+| `Possum-<version>-android.apk` | Android 12+ phones and tablets, Samsung DeX included |
 
 Not sure which processor you have? On a Mac, Apple menu → About This Mac says "Chip:
 Apple M…" or "Processor: Intel". On Linux, `uname -m` prints `x86_64`
@@ -110,6 +145,17 @@ tar -xzf possum-1.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
 (That puts `possum` in `~/.local/bin`, which Ubuntu, Debian and Fedora add
 to your PATH once the folder exists; log out and back in if `possum` isn't
 found.)
+
+**Android:** download the APK on the phone (or copy it there) and open it.
+Android asks whether the browser (or Files) may install apps: allow it, and
+install. Open **Possum**: it asks to show notifications (its menu), then for
+**Appear on top**; switch that on and go back, and the possum starts
+running. On Android 15 and newer, that switch is greyed out for apps
+installed from a file: open App info, tap ⋮, choose **Allow restricted
+settings**, and switch it on again. If it stops by itself after a while,
+battery saving put it to sleep: App info → Battery → **Unrestricted**.
+Releases are signed with the same key, so a new one installs over the old
+one, settings and all.
 
 **How they're made:** see [Release builds](#release-builds) under Tests.
 
@@ -158,6 +204,22 @@ missing target. You can also choose:
 Windows scales the possum like everything else: at 150% display scaling it's
 1.5 times bigger, so it looks the same size as on a Mac.
 
+### Windows on Arm
+
+Releases ship the x86-64 `possum.exe`, which Windows on Arm runs through its
+built-in emulation. A native ARM64 one builds the same way, with Visual
+Studio's ARM64 build tools installed:
+
+```powershell
+rustup target add aarch64-pc-windows-msvc
+cargo build --release --target aarch64-pc-windows-msvc
+target\aarch64-pc-windows-msvc\release\possum.exe
+```
+
+On a Mac or Linux, `cargo xwin build --release --target
+aarch64-pc-windows-msvc` cross-builds it, and `./windows-test.sh --arm64`
+tests it (see [Wine](#wine-the-windows-version-on-a-mac-or-linux)).
+
 ## Build and run on Linux
 
 1. Install a linker and Git with your distribution's packages, and Rust
@@ -200,6 +262,189 @@ Good to know:
   `aplay` (ALSA), whichever is installed. If none is, Possum says so once
   and screams silently.
 
+## Build and run on Android
+
+Possum's Android app is in [`android/`](../android): the shared Rust code as
+a library, and a small Java app around it, built with the Android SDK's own
+tools (no Gradle). With the Android SDK (platform 36, build-tools and the
+NDK), JDK 17 or newer, and Rust from rustup:
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+./android/build.sh
+adb install -r dist/Possum-*-android.apk
+```
+
+The APK has the Rust core for ARM64 and x86-64. Built this way it's signed
+with your computer's Android debug key, so uninstall a release before
+installing your own build, and the other way round. Everything else
+(installing the SDK, what each Java file does, logs) is in
+[android/README.md](../android/README.md).
+
+## Wine: the Windows version on a Mac or Linux
+
+[Wine](https://www.winehq.org) runs Windows programs on macOS and Linux,
+and Possum's `possum.exe` runs in it. For using Possum, the native versions
+are better on both (Possum.app on a Mac, the packages on Linux): smaller,
+and without Wine's limits. Wine is for trying and testing the Windows
+version. This section has the scripts for both, and for a Mac app made of
+`possum.exe` and Wine.
+
+### Running it
+
+- **Linux:** install Wine from your distribution (`sudo apt install wine`,
+  `sudo dnf install wine`) and run `wine possum.exe`, from a release's zip
+  or built by `./windows-test.sh --app` (below).
+- **Mac:** `./windows-test.sh --run` builds it and runs it with WineHQ's
+  Wine until you choose **Quit Possum** (log in `target/windows-run.log`),
+  or build [the Mac app](#a-mac-app-possum-wineapp) and double-click it.
+  Don't double-click `possum.exe` in the Finder: that starts it through the
+  "Wine Devel" app, which stays in the Dock with Wine's icon, and when that
+  app quits, macOS ends the Wine processes it started, Wine's server among
+  them. Possum can't go on without it: it freezes where it is, menu and
+  all, until it's force-quit.
+
+With `--verbose`, the Windows version also logs its sounds, clicks on its
+tray icon, its menu, and any frame that comes late, so a log shows where it
+stopped.
+
+Under Wine on a Mac, the possum runs over the desktop, cut cleanly to its
+outline, screams on time, and shows speech bubbles; its tray icon appears in
+the menu bar, and its menu opens under it and works down to **Quit
+Possum**. Its icon in the Dock is Possum's own: `possum.exe` carries it
+(drawn from the same sprite by `build.rs`), and Windows shows it for the
+file too. But Wine isn't Windows. The menu bar and the Dock stay above every
+app's windows, and macOS moves any window reaching above the menu bar down
+below it; so Possum, which recognises Wine on a Mac, runs around the space
+between them instead of the whole screen. A click outside Wine's windows
+doesn't reach Wine, so it can't close the menu: a second click on the icon
+does. And locking the Mac isn't locking Windows, so it doesn't keep quiet
+while the Mac is locked.
+
+### Testing it
+
+```sh
+./windows-test.sh
+```
+
+builds the same `possum.exe` that releases ship (x86_64, Microsoft's C
+runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin)
+and zips it like a release (`dist/possum-<version>-windows-x86_64.zip`),
+runs the tests under Wine, then runs the app for 10 seconds and saves its
+log and a screenshot of the whole screen in `target/`. Then it tries the
+tray menu: it opens it, closes it with a second click on the icon, chooses
+**Scream Now**, and quits with **Quit Possum**, all through the messages
+Windows would send (a small helper,
+[`tools/wine-driver`](../tools/wine-driver/src/main.rs), posts them from
+inside Wine), so your own mouse and keyboard are left alone. `--tests` runs
+only the tests, `--app 30` only the app (for 30 seconds), `--sound` lets it
+scream out loud, and `--arm64` does all of it with `possum.exe` built for
+Windows on Arm: on an Apple Silicon Mac, in the native ARM64 Wine that the
+Mac app below uses (build the app first: that downloads it).
+
+The first run sets everything up in a cache folder
+(`~/Library/Caches/possum` on a Mac, `~/.cache/possum` on Linux; about
+2.5 GB; nothing system-wide, no `sudo`): cargo-xwin, Microsoft's C runtime
+and Windows SDK (which means accepting [Microsoft's
+licence](https://go.microsoft.com/fwlink/?LinkId=2086102) for them), and on
+a Mac, WineHQ's macOS build of Wine (Homebrew's Wine packages are disabled
+because they don't pass Gatekeeper). On Linux, install Wine from your
+distribution.
+
+It has been run on:
+
+- **A Mac with WineHQ's Wine 11.21** (Intel code, through Rosetta 2): all
+  50 tests pass, and the app and its menu work as described above.
+- **A Mac with MetalSharp Wine 6.5** (Wine 11.20 built for Apple Silicon),
+  with `--arm64`: the ARM64 `possum.exe` runs natively, with no Rosetta
+  anywhere. All 50 tests pass, and the app and its menu work the same.
+- **Linux: Wine 10.0** (the version Ubuntu 26.04 and Debian 13 package) in
+  the ARM64 Ubuntu 26.04 VM described under [Tests](#tests), with GNOME on
+  Wayland. An ARM64 Linux runs x86-64 Wine through
+  [box64](https://github.com/ptitSeb/box64) (`sudo apt install box64`, and
+  an x86-64 Wine build such as
+  [Kron4ek's](https://github.com/Kron4ek/Wine-Builds)); Wine 11 needs a
+  newer box64 than Ubuntu's 0.3.8. There, all 50 tests pass; the possum
+  runs around the screen through XWayland, cut to its outline; its tray
+  icon shows in GNOME's top bar (through the AppIndicator extension), and
+  the menu opens under it and quits; and it plays its screams through
+  PipeWire. Ubuntu's box64 (0.3.8) sometimes stops one of Wine's own
+  processes with an "illegal instruction", even while Wine sets up its
+  prefix: if Wine then says it can't load `kernel32.dll`, delete the prefix
+  and let Wine make it again. Ubuntu also packages Wine 10.0 built for
+  ARM64, which would run the ARM64 `possum.exe` natively, but in that VM it
+  never finished setting up a prefix (`wineboot` spins before loading
+  anything), so there it's box64.
+
+CI's Windows jobs remain the real check of the Windows version.
+
+### A Mac app: Possum Wine.app
+
+`packaging/macos-wine/build.sh` makes **Possum Wine.app**: `possum.exe` and
+Wine in one Mac app, so the Windows version starts with a double-click,
+like any app. Releases don't include it (see below); build it yourself:
+
+```sh
+packaging/macos-wine/build.sh            # Apple Silicon, macOS 15+: native ARM64
+packaging/macos-wine/build.sh --intel    # Intel Macs (and Apple Silicon, through Rosetta 2)
+packaging/macos-wine/build.sh --test     # either, then run it for 10 seconds and test its menu
+```
+
+It makes `dist/Possum Wine.app` and, to give to someone,
+`dist/Possum-Wine-<version>-macos-<arm64|x86_64>.zip`. It needs what
+`windows-test.sh` needs (Rust from rustup; it installs cargo-xwin and
+Rust's `llvm-tools` itself).
+
+| | Apple Silicon (default) | `--intel` |
+|---|---|---|
+| **possum.exe** | Built for Windows on Arm (`aarch64-pc-windows-msvc`) | The x86-64 one releases ship |
+| **Wine** | [MetalSharp Wine](https://github.com/metalsharp/MetalSharp-Wine) 6.5: Wine 11.20 built for Apple Silicon | WineHQ's Wine 11.21 for macOS ([Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds)) |
+| **Runs on** | Apple Silicon Macs with macOS 15 or later, natively | Intel Macs; Apple Silicon Macs through Rosetta 2 |
+| **Size** | About 900 MB (170 MB zipped) | About 250 MB (95 MB zipped) |
+| **Future** | Needs no Rosetta, so it's unaffected when macOS stops running Intel apps | macOS 27 already warns that this Wine won't open on macOS 28, which keeps Rosetta 2 only for some older games |
+
+How it's built:
+
+1. **Wine** is downloaded once into the cache folder, from a pinned release
+   checked against its SHA-256. MetalSharp's is about 1 GB, fetched in 16
+   parts at once, because GitHub sends any one connection slowly.
+2. **possum.exe** is cross-built with cargo-xwin (as above), and the app's
+   icon is drawn from the same pixel art as Possum.app's.
+3. **Wine is trimmed** to what Possum uses. Left out: the Direct3D and
+   Vulkan layers, the .NET and HTML engines, 32-bit Windows, MetalSharp's
+   Steam setup, and the tools for building Windows programs. The debugging
+   information comes out of Wine's Windows DLLs too (`llvm-objcopy
+   --strip-debug`, from Rust's `llvm-tools`): it's most of their size in
+   MetalSharp's build. 3.7 GB becomes about 900 MB.
+4. **The app's program** is a short script that becomes Wine running
+   `possum.exe` (`exec`): the app, Wine and Possum are one process. Quitting
+   Possum quits the app; quitting the app (from the Dock, or Force Quit)
+   quits Possum; and Wine's server lives exactly as long as they do. That's
+   what the "Wine Devel" app gets wrong (see [Running it](#running-it)). In
+   the Dock and the app switcher, it's **Possum Wine**, with Possum's icon.
+5. It's signed ad hoc, like Possum.app, and zipped with `ditto`. A
+   `WINE.txt` inside says which Wine it holds, and where its source is.
+
+**Using it:** put it in Applications and double-click it. The first start
+sets up Wine's C: drive for it, which takes a minute (a note says so), in
+`~/Library/Application Support/Possum Wine`; its log (`possum.log`) and
+Wine's setup log go there too. After that it starts in a few seconds. It
+runs as described in [Running it](#running-it): between the menu bar and
+the Dock, with its menu in the menu bar. To remove it, delete the app and
+that folder.
+
+**Giving it to someone:** the zip works on another Mac of the same kind,
+but the app isn't signed with an Apple Developer ID or notarized, so the
+first start needs **Open Anyway**, as for Possum.app (see
+[Download](#download)). Wine is free software under the GNU LGPL
+(MetalSharp's changes: AGPL-3.0), and passing it on means offering its
+source with it: `WINE.txt` links to it.
+
+**Why releases don't include it:** it's hundreds of megabytes to run a
+1 MB program that has a native Mac version already; it depends on a Wine
+built by someone else (MetalSharp's Wine for Apple Silicon is early-access
+and changes fast); and the Intel one won't outlive Rosetta 2.
+
 ## Installing
 
 **macOS**
@@ -234,6 +479,15 @@ Good to know:
   SmartScreen may warn about it the first time on another PC (**More info →
   Run anyway**).
 
+**Android**
+
+- **Keep it:** the app stays installed like any other. It starts when you
+  open it, not by itself when the phone starts.
+- **Finding it:** while it runs, it's in the notifications, which are also
+  its menu. Its own screen (open **Possum** from the app list) starts and
+  stops it and switches silent screaming on and off.
+- **Updating:** install a newer release's APK over it.
+
 **Linux**
 
 - **Keep it:** install the `.deb` or `.rpm`, or unpack the tarball into
@@ -255,6 +509,7 @@ Good to know:
 
 Click the little screaming possum head: in the **menu bar** on macOS, in the
 **notification area** (tray) on Windows, and in the **tray** on Linux. On
+Android, the menu is Possum's notification, with the same items as buttons. On
 macOS, **Control-Option-Command-P** (⌃⌥⌘P) also opens the menu, right at the
 mouse pointer, wherever the icon is.
 
@@ -507,7 +762,11 @@ push, on **macOS** (Apple Silicon, and Intel through Rosetta), **Windows**,
 Rust from `rust-toolchain.toml`, and fails on any compiler or Clippy
 warning. It also starts the real app on each of them (a bare
 virtual X server on Linux, without a compositor) and keeps screenshots and
-logs as artifacts.
+logs as artifacts. For **Android**, it lints and tests the Android crate,
+builds the APK, and runs it on an Android 16 emulator: installed, allowed
+to appear on top, started from its own screen, then a second display is
+plugged in (an emulated one, as DeX's monitor is to the phone), with
+screenshots and Possum's log.
 
 ### Release builds
 
@@ -538,6 +797,20 @@ downloaded onto a clean machine, unpacked or installed, and run.
   with `desktop-file-validate`, the app runs on a virtual screen (and must
   draw something), the tarball's binary runs too, and the package
   uninstalls cleanly.
+- **Android:** `android/build.sh` on Linux, with the release's version
+  (version code 1004 for 1.4, so each release installs over the one
+  before) and the release key. Checked: its signature (`apksigner`), both
+  the ARM64 and the x86-64 library, and alignment for phones with 16 KB
+  memory pages. Then, on emulators with **Android 12** (the oldest it runs
+  on) **and Android 16**: installed with `adb`, allowed to appear on top,
+  and started; it must show its overlay, run around, scream, and still be
+  running after a second display comes and goes. The release key lives in
+  the repository's secrets: `ANDROID_KEYSTORE_BASE64` (a PKCS#12 keystore,
+  in base64, with the key under the alias `possum`) and
+  `ANDROID_KEYSTORE_PASSWORD`. A phone only installs an update signed with
+  the same key as the version it has, so that key must never change.
+  Without those secrets, the APK is signed with a key made for that build
+  alone, and the release notes say to uninstall the previous version first.
 
 Each artifact is a single file uploaded as is (`archive: false`): GitHub's
 usual zip around artifacts would drop the executable permission that the
@@ -548,8 +821,9 @@ all of the above passes. Versions go 1.0, 1.1, 1.2 and so on: the major
 version is the one in `Cargo.toml`, and each release takes the next minor
 number after the newest `v<major>.<minor>` tag. A first job picks the
 number and every build uses it, in the file names, the app's
-`Info.plist` and the packages' version fields. The release, tagged `v1.N`
-on the tested commit and marked **Latest**, holds all nine files, a
+`Info.plist`, the packages' version fields and the APK's. The release,
+tagged `v1.N` on the tested commit and marked **Latest**, holds all ten
+files, a
 `SHA256SUMS` file, and notes with a table of which file is for which
 system and the commits since the previous release. If any file is missing
 or any check fails, nothing is released. Releases are made one at a time:
@@ -583,66 +857,9 @@ Xwayland crash above. Run there, it was checked that:
 
 ### Testing the Windows version on a Mac or Linux
 
-```sh
-./windows-test.sh
-```
-
-builds the same `possum.exe` that releases ship (x86_64, Microsoft's C
-runtime linked in) with [cargo-xwin](https://github.com/rust-cross/cargo-xwin)
-and zips it like a release (`dist/possum-<version>-windows-x86_64.zip`),
-runs the tests under [Wine](https://www.winehq.org), then runs the app for 10
-seconds and saves its log and a screenshot of the whole screen in
-`target/`. Then it tries the tray menu: it opens it, closes it with a second
-click on the icon, chooses **Scream Now**, and quits with **Quit Possum**,
-all through the messages Windows would send (a small helper,
-[`tools/wine-driver`](../tools/wine-driver/src/main.rs), posts them from
-inside Wine), so your own mouse and keyboard are left alone. `--tests` runs only the tests, `--app 30` only the app (for 30
-seconds), and `--sound` lets it scream out loud.
-
-The first run sets everything up in a cache folder (about 2.5 GB; nothing
-system-wide, no `sudo`): cargo-xwin, Microsoft's C runtime and Windows SDK
-(which means accepting [Microsoft's licence](https://go.microsoft.com/fwlink/?LinkId=2086102)
-for them), and on a Mac, WineHQ's macOS build of Wine (Homebrew's Wine
-packages are disabled because they don't pass Gatekeeper). On Linux, install
-Wine from your distribution.
-
-Under Wine on a Mac, the possum runs over the desktop, cut cleanly to its
-outline, screams on time, and shows speech bubbles; its tray icon appears in
-the menu bar, and its menu opens under it and works down to **Quit
-Possum**. Its icon in the Dock is Possum's own: `possum.exe` carries it
-(drawn from the same sprite by `build.rs`), and Windows shows it for the
-file too. But Wine isn't Windows. The menu bar and the Dock stay above every
-app's windows, and macOS moves any window reaching above the menu bar down
-below it; so Possum, which recognises Wine on a Mac, runs around the space
-between them instead of the whole screen. A click outside Wine's windows
-doesn't reach Wine, so it can't close the menu: a second click on the icon
-does. And locking the Mac isn't locking Windows, so keeping quiet while
-locked isn't tested here. CI's Windows jobs remain the real check. Wine for the Mac runs Intel code through Rosetta 2, and macOS 27
-already warns that this Wine won't open on macOS 28.
-
-To just run the Windows version on a Mac, use `./windows-test.sh --run` (or
-`wine possum.exe` in a terminal): it runs until you choose **Quit Possum**,
-logging to `target/windows-run.log`. Don't double-click `possum.exe` in the
-Finder: that starts it through the "Wine Devel" app, which stays in the Dock
-with Wine's icon, and when that app quits, macOS ends the Wine processes it
-started, Wine's server among them. Possum can't go on without it: it
-freezes where it is, menu and all, until it's force-quit. With `--verbose`
-the Windows version also logs its sounds, clicks on its tray icon, its menu,
-and any frame that comes late, so a log shows where it stopped.
-
-The same `possum.exe` was also run under Wine on Linux: **Wine 10.0** (the
-version Ubuntu 26.04 and Debian 13 package) in the ARM64 Ubuntu 26.04 VM
-above, with GNOME on Wayland. An ARM64 Linux runs x86-64 Wine through
-[box64](https://github.com/ptitSeb/box64) (`sudo apt install box64`, and an
-x86-64 Wine build such as [Kron4ek's](https://github.com/Kron4ek/Wine-Builds));
-Wine 11 needs a newer box64 than Ubuntu's 0.3.8. There, all 50 tests pass;
-the possum runs around the screen through XWayland, cut to its outline; its
-tray icon shows in GNOME's top bar (through the AppIndicator extension),
-and the menu opens under it and quits; and it plays its screams through
-PipeWire. Ubuntu's box64 (0.3.8) sometimes stops one of Wine's own
-processes with an "illegal instruction", even while Wine sets up its
-prefix: if Wine then says it can't load `kernel32.dll`, delete the prefix
-and let Wine make it again.
+`./windows-test.sh` builds the Windows version and tests it under Wine: see
+[Wine](#wine-the-windows-version-on-a-mac-or-linux), which also says what
+has been run where.
 
 ### Your own Linux VM
 
