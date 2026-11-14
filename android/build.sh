@@ -96,7 +96,7 @@ if [ -n "${POSSUM_KEYSTORE:-}" ]; then
     [ -f "$POSSUM_KEYSTORE" ] || fail "no keystore at $POSSUM_KEYSTORE"
     [ -n "${POSSUM_KEYSTORE_PASSWORD:-}" ] || fail "POSSUM_KEYSTORE needs POSSUM_KEYSTORE_PASSWORD"
     echo "signing with the key in $POSSUM_KEYSTORE"
-    "$BUILD_TOOLS/apksigner" sign --ks "$POSSUM_KEYSTORE" --ks-pass env:POSSUM_KEYSTORE_PASSWORD \
+    "$BUILD_TOOLS/apksigner" sign --v4-signing-enabled false --ks "$POSSUM_KEYSTORE" --ks-pass env:POSSUM_KEYSTORE_PASSWORD \
         --ks-key-alias "${POSSUM_KEY_ALIAS:-possum}" --out "$APK" "$OUT/aligned.apk"
 else
     # Android Studio's debug key, made the same way if it isn't there yet:
@@ -107,7 +107,7 @@ else
         "${JAVA_BIN}keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -alias androiddebugkey \
             -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
     fi
-    "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
+    "$BUILD_TOOLS/apksigner" sign --v4-signing-enabled false --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
         --ks-key-alias androiddebugkey --out "$APK" "$OUT/aligned.apk"
 fi
 "$BUILD_TOOLS/apksigner" verify "$APK"
