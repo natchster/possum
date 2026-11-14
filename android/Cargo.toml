@@ -1,0 +1,29 @@
+[package]
+name = "possum-android"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.85"
+resolver = "3"
+publish = false
+description = "Possum for Android and Samsung DeX: the shared Rust core, as a library for the Java app."
+license-file = "../LICENSE"
+
+# libpossum.so, loaded by the Java app (java/.../Native.java).
+[lib]
+name = "possum"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+# Writes the launcher icons at build time (see build.sh); runs on the
+# computer doing the build, not on the phone.
+[[bin]]
+name = "possum-icons"
+path = "src/icons.rs"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

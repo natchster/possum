@@ -9,3 +9,6 @@ opossumeme.webp
 
 # Build output of the tools (windows-test.sh builds them into target/)
 /tools/*/target
+
+# Android build output (android/build.sh)
+/android/target
