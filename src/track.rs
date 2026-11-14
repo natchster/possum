@@ -104,11 +104,7 @@ impl Track {
             // The last segment also absorbs any floating-point leftovers.
             if d <= *len || i == last {
                 return match *seg {
-                    Seg::Line { x, y, heading } => Pose {
-                        x: x + d * heading.cos(),
-                        y: y + d * heading.sin(),
-                        heading,
-                    },
+                    Seg::Line { x, y, heading } => Pose { x: x + d * heading.cos(), y: y + d * heading.sin(), heading },
                     Seg::Arc { cx, cy, start } => {
                         let a = if r > 0.0 { start + d / r } else { start };
                         Pose { x: cx + r * a.cos(), y: cy + r * a.sin(), heading: a + FRAC_PI_2 }

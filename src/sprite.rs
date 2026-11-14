@@ -175,11 +175,7 @@ impl Canvas {
     }
 
     fn get(&self, x: i32, y: i32) -> u8 {
-        if x < 0 || y < 0 || x >= self.w || y >= self.h {
-            CLEAR
-        } else {
-            self.px[(y * self.w + x) as usize]
-        }
+        if x < 0 || y < 0 || x >= self.w || y >= self.h { CLEAR } else { self.px[(y * self.w + x) as usize] }
     }
 
     fn set(&mut self, x: i32, y: i32, c: u8) {
@@ -223,9 +219,8 @@ impl Canvas {
                 if src.get(x, y) != CLEAR {
                     continue;
                 }
-                let touches = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-                    .iter()
-                    .any(|&(dx, dy)| src.get(x + dx, y + dy) != CLEAR);
+                let touches =
+                    [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|&(dx, dy)| src.get(x + dx, y + dy) != CLEAR);
                 if touches {
                     self.set(x, y, OUTLINE);
                 }
@@ -323,10 +318,10 @@ struct Leg {
 }
 
 const LEGS: [Leg; 4] = [
-    Leg { hip: (23.0, 23.0), phase: 0.7, near: false },     // back, far side
+    Leg { hip: (23.0, 23.0), phase: 0.7, near: false }, // back, far side
     Leg { hip: (40.0, 21.5), phase: PI + 0.7, near: false }, // front, far side
-    Leg { hip: (26.5, 23.5), phase: 0.0, near: true },      // back, near side
-    Leg { hip: (43.5, 22.0), phase: PI, near: true },       // front, near side
+    Leg { hip: (26.5, 23.5), phase: 0.0, near: true },  // back, near side
+    Leg { hip: (43.5, 22.0), phase: PI, near: true },   // front, near side
 ];
 
 /// Paw position for a gait phase: on the ground sliding backwards for the
@@ -395,17 +390,13 @@ fn hash(x: i32, y: i32) -> u32 {
 
 fn draw_body(c: &mut Canvas, dy: f32) {
     let inside = |x: f32, y: f32| {
-        let e = |cx: f32, cy: f32, rx: f32, ry: f32| {
-            ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2) <= 1.0
-        };
+        let e = |cx: f32, cy: f32, rx: f32, ry: f32| ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2) <= 1.0;
         // Big haunches at the back, narrower shoulders at the front.
         e(29.5, 19.0, 11.5, 6.6) || e(41.0, 17.6, 8.5, 6.0)
     };
     let shift = dy as i32;
     for x in 0..c.w {
-        let col: Vec<i32> = (0..c.h)
-            .filter(|&y| inside(x as f32 + 0.5, (y - shift) as f32 + 0.5))
-            .collect();
+        let col: Vec<i32> = (0..c.h).filter(|&y| inside(x as f32 + 0.5, (y - shift) as f32 + 0.5)).collect();
         let (Some(&top), Some(&bot)) = (col.first(), col.last()) else { continue };
         for &y in &col {
             let t = (y - top) as f32 / (bot - top).max(1) as f32;
@@ -450,8 +441,7 @@ fn possum_frame(frame: usize, screaming: bool) -> Canvas {
     for leg in LEGS.iter().filter(|l| l.near) {
         draw_leg(&mut c, leg.hip, phase + leg.phase, dy, true);
     }
-    let (head, hx): (&[&str], i32) =
-        if screaming { (&HEAD_SCREAM, SCREAM_HEAD_X) } else { (&HEAD_OPEN, HEAD_X) };
+    let (head, hx): (&[&str], i32) = if screaming { (&HEAD_SCREAM, SCREAM_HEAD_X) } else { (&HEAD_OPEN, HEAD_X) };
     // While screaming the head shakes with the effort of it.
     let shake = if screaming && frame % 2 == 1 { -1 } else { 0 };
     c.stamp(head, hx, HEAD_Y + dy as i32 + shake);
@@ -485,8 +475,7 @@ pub enum Pointer {
 }
 
 impl Pointer {
-    pub const ALL: [Pointer; 4] =
-        [Pointer::BottomLeft, Pointer::BottomRight, Pointer::TopRight, Pointer::TopLeft];
+    pub const ALL: [Pointer; 4] = [Pointer::BottomLeft, Pointer::BottomRight, Pointer::TopRight, Pointer::TopLeft];
 
     fn at_top(self) -> bool {
         matches!(self, Pointer::TopLeft | Pointer::TopRight)
@@ -508,8 +497,7 @@ impl Pointer {
 /// text is never mirrored, so it reads correctly whichever way it points.
 pub fn bubble(text: &str, pointer: Pointer) -> Canvas {
     let glyphs: Vec<&[&str]> = text.chars().map(glyph_or_blank).collect();
-    let text_w: i32 = glyphs.iter().map(|g| g[0].len() as i32).sum::<i32>()
-        + glyphs.len().saturating_sub(1) as i32;
+    let text_w: i32 = glyphs.iter().map(|g| g[0].len() as i32).sum::<i32>() + glyphs.len().saturating_sub(1) as i32;
     let pad = 3;
     let (bw, bh) = (text_w + pad * 2, 5 + pad * 2);
     let tail = 4;

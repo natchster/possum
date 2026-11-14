@@ -16,15 +16,15 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::ptr::{null_mut, NonNull};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ptr::{NonNull, null_mut};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol, Sel};
-use objc2::{define_class, msg_send, sel, AllocAnyThread, MainThreadMarker, MainThreadOnly};
+use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
     NSApplicationDidChangeScreenParametersNotification, NSBackingStoreType, NSColor, NSControlStateValueOff,
@@ -36,19 +36,19 @@ use objc2_core_foundation::{
     CFBoolean, CFData, CFRetained, CFString, CFType, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize,
 };
 use objc2_core_graphics::{
-    kCGColorSpaceSRGB, CGBitmapInfo, CGColor, CGColorRenderingIntent, CGColorSpace, CGDataProvider,
-    CGDisplayIsAsleep, CGImage, CGImageAlphaInfo, CGMainDisplayID, CGSessionCopyCurrentDictionary,
+    CGBitmapInfo, CGColor, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGDisplayIsAsleep, CGImage,
+    CGImageAlphaInfo, CGMainDisplayID, CGSessionCopyCurrentDictionary, kCGColorSpaceSRGB,
 };
 use objc2_foundation::{
-    NSData, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter,
-    NSNotificationSuspensionBehavior, NSObject, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
+    NSData, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSNotificationSuspensionBehavior,
+    NSObject, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
 };
-use objc2_quartz_core::{kCAFilterNearest, kCAGravityResize, CALayer, CATextLayer, CATransaction};
+use objc2_quartz_core::{CALayer, CATextLayer, CATransaction, kCAFilterNearest, kCAGravityResize};
 
-use crate::brain::{self, Brain, Host, Scene, Settings, SCREAM_NOW, SILENT};
+use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, Scene, Settings};
 use crate::scream::{Kind, Rng};
 use crate::sprite::{self, Canvas};
-use crate::{quiet, screens, Options};
+use crate::{Options, quiet, screens};
 
 /// What macOS told us since the last tick: lock, screensaver and sleep
 /// events (see quiet.rs), and whether the displays changed.
@@ -223,7 +223,12 @@ impl SystemWatcher {
             }
             let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
             for name in quiet::WORKSPACE_NOTIFICATIONS {
-                workspace.addObserver_selector_name_object(&this, sel!(systemEvent:), Some(&NSString::from_str(name)), None);
+                workspace.addObserver_selector_name_object(
+                    &this,
+                    sel!(systemEvent:),
+                    Some(&NSString::from_str(name)),
+                    None,
+                );
             }
             NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
                 &this,
@@ -263,9 +268,7 @@ impl Art {
             bubbles: brain::shouts().map(|texts| {
                 texts
                     .iter()
-                    .map(|text| {
-                        sprite::Pointer::ALL.map(|p| Bubble { image: cg_image(&sprite::bubble(text, p), 1) })
-                    })
+                    .map(|text| sprite::Pointer::ALL.map(|p| Bubble { image: cg_image(&sprite::bubble(text, p), 1) }))
                     .collect()
             }),
         }
@@ -558,10 +561,7 @@ impl Possum {
 
         let mut sounds = sounds;
         brain.update(sounds.probe());
-        brain.log(format_args!(
-            "running around the primary display, {}x{}",
-            screen.size.width, screen.size.height
-        ));
+        brain.log(format_args!("running around the primary display, {}x{}", screen.size.width, screen.size.height));
         if shortcut {
             brain.log(format_args!("{SHORTCUT} opens the menu"));
         }

@@ -182,9 +182,8 @@ mod tests {
     #[test]
     fn every_subscribed_notification_maps_to_an_event() {
         let names = DISTRIBUTED_NOTIFICATIONS.iter().chain(WORKSPACE_NOTIFICATIONS.iter());
-        let events: Vec<Event> = names
-            .map(|n| Event::from_notification(n).unwrap_or_else(|| panic!("unmapped {n}")))
-            .collect();
+        let events: Vec<Event> =
+            names.map(|n| Event::from_notification(n).unwrap_or_else(|| panic!("unmapped {n}"))).collect();
         // Ten distinct events: every on has its off.
         assert_eq!(events.len(), 10);
         for (i, a) in events.iter().enumerate() {

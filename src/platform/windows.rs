@@ -17,50 +17,50 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateBitmap, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW,
-    MonitorFromPoint, ReleaseDC, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateBitmap, CreateCompatibleDC,
+    CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY,
+    MONITORINFO, MonitorFromPoint, ReleaseDC, SelectObject,
 };
 use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_WRITE, OPEN_EXISTING};
 use windows_sys::Win32::System::Console::{
-    AttachConsole, GetStdHandle, SetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Power::{RegisterPowerSettingNotification, POWERBROADCAST_SETTING};
-use windows_sys::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
-use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, OpenInputDesktop, DESKTOP_SWITCHDESKTOP};
+use windows_sys::Win32::System::Power::{POWERBROADCAST_SETTING, RegisterPowerSettingNotification};
+use windows_sys::Win32::System::RemoteDesktop::{NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification};
+use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, DESKTOP_SWITCHDESKTOP, OpenInputDesktop};
 use windows_sys::Win32::System::SystemServices::GUID_CONSOLE_DISPLAY_STATE;
 use windows_sys::Win32::UI::HiDpi::{
-    GetDpiForMonitor, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyIcon, DestroyMenu, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TrackPopupMenu, TranslateMessage, DEVICE_NOTIFY_WINDOW_HANDLE, HICON, HWND_TOPMOST,
-    ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
-    PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, SPI_GETSCREENSAVERRUNNING,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, ULW_ALPHA, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_NULL, WM_POWERBROADCAST,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
+    DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, GetCursorPos, GetMessageW,
+    HICON, HWND_TOPMOST, ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
+    PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostMessageW,
+    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SPI_GETSCREENSAVERRUNNING, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, ULW_ALPHA,
+    UpdateLayeredWindow, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_NULL, WM_POWERBROADCAST,
     WM_RBUTTONUP, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT,
-    WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK, UpdateLayeredWindow,
+    WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
 };
 
-use crate::brain::{self, Brain, Host, Scene, Settings, SCREAM_NOW, SILENT};
+use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, Scene, Settings};
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
-use crate::{quiet, screens, sprite, Options};
+use crate::{Options, quiet, screens, sprite};
 
 /// The tray icon's messages come back as this.
 const WM_TRAY: u32 = WM_APP + 1;
@@ -156,7 +156,17 @@ pub fn run(opts: &Options) {
         // A hidden window that receives the timer, tray, session and power
         // messages. (Message-only windows don't get broadcasts.)
         let main = CreateWindowExW(
-            WS_EX_TOOLWINDOW, class.as_ptr(), title.as_ptr(), WS_POPUP, 0, 0, 0, 0, null_mut(), null_mut(), instance,
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            title.as_ptr(),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            null_mut(),
+            null_mut(),
+            instance,
             null(),
         );
         let layered = || {
@@ -239,7 +249,8 @@ fn primary_monitor() -> (screens::Rect, f64) {
         let r = info.rcMonitor;
         let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
         GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
-        let rect = screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
+        let rect =
+            screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
         (rect, dpi_x.max(96) as f64 / 96.0)
     }
 }

@@ -94,9 +94,8 @@ impl Art {
         Self {
             scream: art.scream.iter().map(|f| [with_yell(f, &yells[0]), with_yell(f, &yells[1])]).collect(),
             run: art.run,
-            bubbles: brain::shouts().map(|texts| {
-                texts.iter().map(|t| sprite::Pointer::ALL.map(|p| sprite::bubble(t, p))).collect()
-            }),
+            bubbles: brain::shouts()
+                .map(|texts| texts.iter().map(|t| sprite::Pointer::ALL.map(|p| sprite::bubble(t, p))).collect()),
         }
     }
 

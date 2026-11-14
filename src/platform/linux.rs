@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use x11rb::connection::{Connection, RequestConnection};
+use x11rb::protocol::Event;
 use x11rb::protocol::dpms::ConnectionExt as _;
 use x11rb::protocol::randr::{self, ConnectionExt as _};
 use x11rb::protocol::shape::{self, ConnectionExt as _};
@@ -35,13 +36,12 @@ use x11rb::protocol::xproto::{
     AtomEnum, ClipOrdering, ConfigureWindowAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
     ImageFormat, ImageOrder, PropMode, Rectangle, StackMode, Window, WindowClass,
 };
-use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
-use crate::brain::{self, Brain, Host, Scene, Settings, QUIT, SCREAM_NOW, SILENT};
+use crate::brain::{self, Brain, Host, QUIT, SCREAM_NOW, SILENT, Scene, Settings};
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
-use crate::{quiet, screens, sprite, Options};
+use crate::{Options, quiet, screens, sprite};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -81,8 +81,7 @@ fn try_run(opts: &Options) -> Result<()> {
     let _tray = start_tray();
     let art = Art::new();
     let reach = render::reach(&art, opts.scale);
-    let mut app =
-        App { x, art, sounds, brain, screen, scale: opts.scale, reach, possum_key: None, bubble_key: None };
+    let mut app = App { x, art, sounds, brain, screen, scale: opts.scale, reach, possum_key: None, bubble_key: None };
 
     let clock = Instant::now();
     let frame = Duration::from_secs_f64(1.0 / 60.0);
@@ -182,9 +181,25 @@ impl X11 {
             conn.shape_rectangles(shape::SO::SET, shape::SK::BOUNDING, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
             // An empty input shape: clicks go straight through.
             conn.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?;
-            conn.change_property(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, 8, name.len() as u32, name.as_bytes())?;
+            conn.change_property(
+                PropMode::REPLACE,
+                win,
+                AtomEnum::WM_NAME,
+                AtomEnum::STRING,
+                8,
+                name.len() as u32,
+                name.as_bytes(),
+            )?;
             let class = b"possum\0Possum\0";
-            conn.change_property(PropMode::REPLACE, win, AtomEnum::WM_CLASS, AtomEnum::STRING, 8, class.len() as u32, class)?;
+            conn.change_property(
+                PropMode::REPLACE,
+                win,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                8,
+                class.len() as u32,
+                class,
+            )?;
             Ok(win)
         };
         let possum = make_window("Possum")?;
@@ -212,7 +227,8 @@ impl X11 {
     /// Draws an image into a window, cuts the window to the image's shape,
     /// and moves it to `(x, y)`.
     fn show(&self, win: Window, img: &Image, x: i32, y: i32) -> Result<()> {
-        self.conn.configure_window(win, &ConfigureWindowAux::new().x(x).y(y).width(img.w as u32).height(img.h as u32))?;
+        self.conn
+            .configure_window(win, &ConfigureWindowAux::new().x(x).y(y).width(img.w as u32).height(img.h as u32))?;
         let row = img.w * 4;
         let rows_per_chunk = (self.max_chunk / row).max(1);
         for (i, chunk) in img.bgra.chunks(row * rows_per_chunk).enumerate() {
@@ -256,7 +272,6 @@ impl X11 {
         }
         Ok(seen)
     }
-
 }
 
 #[derive(Default)]
@@ -281,7 +296,8 @@ struct Sounds {
 impl Sounds {
     fn new(voices: &[Vec<crate::scream::Scream>; 2], volume: f32) -> Result<Self> {
         // The runtime directory is private to the user and cleared at logout.
-        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("possum");
+        let dir =
+            std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("possum");
         std::fs::create_dir_all(&dir)?;
         let mut files: [Vec<PathBuf>; 2] = Default::default();
         for (k, kind) in ["aaaa", "hiss"].iter().enumerate() {
@@ -488,8 +504,11 @@ impl ksni::Tray for Tray {
             }
             .into(),
             ksni::MenuItem::Separator,
-            StandardItem { activate: Box::new(|_: &mut Self| QUIT.store(true, Ordering::Relaxed)), ..item("Quit Possum") }
-                .into(),
+            StandardItem {
+                activate: Box::new(|_: &mut Self| QUIT.store(true, Ordering::Relaxed)),
+                ..item("Quit Possum")
+            }
+            .into(),
         ]
     }
 }

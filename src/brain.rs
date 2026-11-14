@@ -536,7 +536,8 @@ mod tests {
         let _g = reset_controls();
         let settings = Settings { scale: 3.0, speed: 260.0, start: 0.4, verbose: false };
         let mut b = Brain::new(&settings, 1512.0, 982.0, [vec![1.2; 3], vec![1.0; 3]], Rng::new(1));
-        let mut host = FakeHost { probe: Probe { screen_locked: Some(true), ..Probe::default() }, ..Default::default() };
+        let mut host =
+            FakeHost { probe: Probe { screen_locked: Some(true), ..Probe::default() }, ..Default::default() };
         let before = b.tick(0.0, &mut host);
         b.set_screen(3440.0, 1440.0);
         let after = b.tick(0.01, &mut host);

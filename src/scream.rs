@@ -376,9 +376,8 @@ mod tests {
         let half = s.wav_at_volume(0.5);
         assert_eq!(half.len(), s.wav.len());
         assert_eq!(&half[..44], &s.wav[..44]);
-        let peak = |w: &[u8]| {
-            w[44..].as_chunks().0.iter().map(|&b| i16::from_le_bytes(b).unsigned_abs()).max().unwrap()
-        };
+        let peak =
+            |w: &[u8]| w[44..].as_chunks().0.iter().map(|&b| i16::from_le_bytes(b).unsigned_abs()).max().unwrap();
         let (full, scaled) = (peak(&s.wav), peak(&half));
         assert!((scaled as f32 - full as f32 * 0.5).abs() <= 1.0, "{full} -> {scaled}");
         assert_eq!(peak(&s.wav_at_volume(0.0)), 0);
@@ -402,6 +401,7 @@ mod tests {
 
     /// Every 50th sample of the first version's "AAAA" (commit 91a751c) for
     /// seed 7, 600 Hz, 0.5 s, recorded on an Apple Silicon Mac.
+    #[rustfmt::skip]
     const AAAA_REFERENCE: [i16; 441] = [
         0, 8, 255, -687, -88, 552, -596, -297, 805, 1720, -3757, -2489, 495, 6182,
         -2399, -3021, -697, 1336, 12403, -7673, -1248, 5268, 4308, 15687, -1653, -26018, 1590, 3953,
@@ -442,7 +442,8 @@ mod tests {
     fn aaaa_voice_is_bit_identical_to_the_first_version_on_macos() {
         // On macOS, where the first version ran, it must match exactly:
         // checksums of the v0.1 code's 16-bit output on each architecture.
-        let checksum = aaaa_pcm().iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(u64::from(v.cast_unsigned())));
+        let checksum =
+            aaaa_pcm().iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(u64::from(v.cast_unsigned())));
         assert_eq!(checksum, GOLDEN_AAAA_CHECKSUM);
     }
 

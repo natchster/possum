@@ -27,8 +27,5 @@ pub fn prepare_console() {}
 
 /// A different seed every run, so the screams vary.
 pub fn seed() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u32)
-        .unwrap_or(0xC0FFEE)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u32).unwrap_or(0xC0FFEE)
 }
