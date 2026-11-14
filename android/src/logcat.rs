@@ -4,18 +4,19 @@
 
 use std::ffi::CString;
 use std::io::{BufRead, BufReader};
-use std::os::fd::FromRawFd;
+use std::os::fd::AsRawFd;
 use std::os::raw::{c_char, c_int};
 use std::sync::Once;
 
 #[link(name = "log")]
-extern "C" {
+unsafe extern "C" {
     fn __android_log_write(priority: c_int, tag: *const c_char, text: *const c_char) -> c_int;
 }
 
-extern "C" {
-    fn pipe(fds: *mut c_int) -> c_int;
-    fn dup2(from: c_int, to: c_int) -> c_int;
+unsafe extern "C" {
+    /// Makes descriptor `to` refer to what `from` does. Plain integers in
+    /// and out, so it can't break memory safety.
+    safe fn dup2(from: c_int, to: c_int) -> c_int;
 }
 
 const INFO: c_int = 4;
@@ -31,14 +32,15 @@ pub fn write(line: &str) {
 pub fn capture_stderr() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let mut fds = [0 as c_int; 2];
-        // SAFETY: `fds` has room for the two descriptors pipe() writes.
-        if unsafe { pipe(fds.as_mut_ptr()) } != 0 || unsafe { dup2(fds[1], 2) } < 0 {
-            write("can't capture stderr; the possum's own log is lost");
-            return;
-        }
-        // SAFETY: the read end is a fresh descriptor that nothing else owns.
-        let reader = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+        // stderr becomes a copy of the pipe's write end, which then isn't
+        // needed itself.
+        let reader = match std::io::pipe() {
+            Ok((reader, writer)) if dup2(writer.as_raw_fd(), 2) >= 0 => reader,
+            _ => {
+                write("can't capture stderr; the possum's own log is lost");
+                return;
+            }
+        };
         let spawned = std::thread::Builder::new().name("possum-log".into()).spawn(move || {
             for line in BufReader::new(reader).lines().map_while(Result::ok) {
                 write(&line);

@@ -1,9 +1,9 @@
 [package]
 name = "possum-android"
 version = "1.0.0"
-edition = "2021"
-rust-version = "1.85"
-resolver = "3"
+edition = "2024"
+# The Rust in ../rust-toolchain.toml, as for the desktop app.
+rust-version = "1.100"
 publish = false
 description = "Possum for Android and Samsung DeX: the shared Rust core, as a library for the Java app."
 license-file = "../LICENSE"
@@ -19,6 +19,13 @@ crate-type = ["cdylib"]
 [[bin]]
 name = "possum-icons"
 path = "src/icons.rs"
+
+[lints.clippy]
+# Every unsafe block says why it's sound, in a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "warn"
+
+[lints.cargo]
+unused_dependencies = "warn"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

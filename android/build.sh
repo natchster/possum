@@ -9,6 +9,8 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# From the repository, so rustup uses the Rust in rust-toolchain.toml.
+cd "$ROOT"
 SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}}
 # Built against and targeting Android 16, which DeX on One UI 8 runs; runs
 # on Android 12 and newer (overlays on other displays need 12).

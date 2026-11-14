@@ -15,22 +15,22 @@
 
 // The desktop app's shared modules, straight from its source tree. Parts of
 // them only some platforms use.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/brain.rs"]
 mod brain;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/quiet.rs"]
 mod quiet;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/render.rs"]
 mod render;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/scream.rs"]
 mod scream;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/sprite.rs"]
 mod sprite;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "parts of the shared modules are for other platforms")]
 #[path = "../../src/track.rs"]
 mod track;
 
@@ -153,9 +153,7 @@ impl Voices {
         let wav = &voices[0][0].wav;
         let sample_rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
         let samples = voices.each_ref().map(|kind| {
-            kind.iter()
-                .map(|s| s.wav[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect())
-                .collect()
+            kind.iter().map(|s| s.wav[44..].as_chunks().0.iter().map(|&b| i16::from_le_bytes(b)).collect()).collect()
         });
         let seconds = voices.each_ref().map(|kind| kind.iter().map(|s| s.seconds).collect());
         Self { sample_rate, samples, seconds }
@@ -269,10 +267,7 @@ impl Core {
 
 /// A different seed every run, so the screams vary.
 pub fn seed() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u32)
-        .unwrap_or(0xC0FFEE)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u32).unwrap_or(0xC0FFEE)
 }
 
 #[cfg(test)]
@@ -285,16 +280,8 @@ mod tests {
         let art = Art::new();
         for frame in 0..sprite::RUN_FRAMES {
             for (screaming, yell) in [(false, None), (true, Some(0)), (true, Some(1))] {
-                let scene = Scene {
-                    x: 0.0,
-                    y: 0.0,
-                    heading: 0.0,
-                    screaming,
-                    frame,
-                    yell,
-                    bubble: None,
-                    check_displays: false,
-                };
+                let scene =
+                    Scene { x: 0.0, y: 0.0, heading: 0.0, screaming, frame, yell, bubble: None, check_displays: false };
                 let picture = p.get(p.possum(&scene)).unwrap();
                 assert_eq!(picture.rgba_scaled(1), art.possum(&scene).rgba_scaled(1));
             }
@@ -302,8 +289,7 @@ mod tests {
         for kind in [Kind::Aaaa, Kind::Hiss] {
             for shout in 0..brain::shouts()[brain::kind_index(kind)].len() {
                 for quadrant in 0..4 {
-                    let b =
-                        brain::Bubble { kind, shout, quadrant, left: 0.0, bottom: 0.0, w: 0.0, h: 0.0 };
+                    let b = brain::Bubble { kind, shout, quadrant, left: 0.0, bottom: 0.0, w: 0.0, h: 0.0 };
                     assert_eq!(p.get(p.bubble(&b)).unwrap().rgba_scaled(1), art.bubble(&b).rgba_scaled(1));
                 }
             }
@@ -318,7 +304,7 @@ mod tests {
         let icon = sprite::status_icon();
         let pixels = argb(&icon);
         assert_eq!(pixels.len(), (icon.w * icon.h) as usize);
-        let opaque = pixels.iter().filter(|&&c| (c as u32) >> 24 == 0xFF).count();
+        let opaque = pixels.iter().filter(|&&c| c.cast_unsigned() >> 24 == 0xFF).count();
         let clear = pixels.iter().filter(|&&c| c == 0).count();
         assert!(opaque > 0 && opaque + clear == pixels.len());
     }

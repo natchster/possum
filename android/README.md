@@ -28,7 +28,8 @@ What Android doesn't allow:
 ## Build
 
 Needs the Android SDK (platform 36, build-tools, the NDK), JDK 17 or newer
-and Rust with the Android target. With the SDK in
+and Rust from rustup with the Android target (in this repository, rustup
+uses the Rust in `rust-toolchain.toml`). With the SDK in
 `~/Library/Android/sdk` (or `$ANDROID_HOME`):
 
 ```sh

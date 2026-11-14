@@ -6,7 +6,7 @@
 
 #[path = "../../src/png.rs"]
 mod png;
-#[allow(dead_code)]
+#[allow(dead_code, reason = "only the icon is drawn here")]
 #[path = "../../src/sprite.rs"]
 mod sprite;
 

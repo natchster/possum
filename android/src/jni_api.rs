@@ -2,16 +2,16 @@
 //! None of them lets a panic reach Java: it's logged (stderr goes to the
 //! log) and the call returns something harmless instead.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use jni::objects::{JClass, JFloatArray, JIntArray};
-use jni::sys::{jboolean, jdouble, jfloat, jfloatArray, jint, jintArray, jshortArray, JNI_FALSE};
 use jni::JNIEnv;
+use jni::objects::{JClass, JFloatArray, JIntArray};
+use jni::sys::{JNI_FALSE, jboolean, jdouble, jfloat, jfloatArray, jint, jintArray, jshortArray};
 
-use crate::{argb, brain, logcat, seed, sprite, Core, Pictures, Voices};
+use crate::{Core, Pictures, Voices, argb, brain, logcat, seed, sprite};
 
 /// The most sound requests one tick can return (Java's array is this long).
 const MAX_REQUESTS: usize = 8;
@@ -40,14 +40,14 @@ fn guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(fallback)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_init(_env: JNIEnv, _class: JClass) {
     guard((), || {
         shared();
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_run(
     _env: JNIEnv,
     _class: JClass,
@@ -64,12 +64,12 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_run(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_stop(_env: JNIEnv, _class: JClass) {
     guard((), || *running() = None)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_resize(
     _env: JNIEnv,
     _class: JClass,
@@ -83,7 +83,7 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_resize(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_tick(
     env: JNIEnv,
     _class: JClass,
@@ -107,18 +107,18 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_tick(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_screamNow(_env: JNIEnv, _class: JClass) {
     brain::SCREAM_NOW.store(true, Ordering::Relaxed);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_pictureCount(_env: JNIEnv, _class: JClass) -> jint {
     guard(0, || shared().pictures.count() as jint)
 }
 
 /// Picture `index` as `[width, height, colours...]`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_picture(
     env: JNIEnv,
     _class: JClass,
@@ -135,7 +135,7 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_picture(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_statusIcon(_env: JNIEnv, _class: JClass) -> jint {
     guard(0, || shared().pictures.status_icon() as jint)
 }
@@ -143,7 +143,7 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_statusIcon(_env: J
 /// `[paws x, paws y, possum width, possum height, bubble width, bubble
 /// height]`, in sprite pixels: the paws are where the possum touches the
 /// screen edge, from the top-left of its pictures.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_layout(env: JNIEnv, _class: JClass) -> jfloatArray {
     guard(null_mut(), || {
         let p = &shared().pictures;
@@ -156,12 +156,12 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_layout(env: JNIEnv
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_sampleRate(_env: JNIEnv, _class: JClass) -> jint {
     guard(0, || shared().voices.sample_rate as jint)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_voiceCount(
     _env: JNIEnv,
     _class: JClass,
@@ -170,7 +170,7 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_voiceCount(
     guard(0, || shared().voices.samples.get(kind as usize).map_or(0, |v| v.len() as jint))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_natchster_possum_Native_voice(
     env: JNIEnv,
     _class: JClass,
