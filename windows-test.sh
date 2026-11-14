@@ -14,6 +14,11 @@
 #   ./windows-test.sh --run        build it and just run it, as it is, until
 #                                  you choose Quit Possum (log in
 #                                  target/windows-run.log)
+#   ./windows-test.sh --arm64 ...  the same with possum.exe for Windows on Arm
+#                                  (aarch64-pc-windows-msvc). On an Apple
+#                                  Silicon Mac it runs natively, in the ARM64
+#                                  Wine that packaging/macos-wine/build.sh
+#                                  downloads (run that first)
 #
 # On a Mac, run it like this (or with `wine possum.exe` in a terminal) rather
 # than by double-clicking possum.exe in the Finder: that starts it through
@@ -39,14 +44,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 TARGET=x86_64-pc-windows-msvc
+ARCH=x86_64
 WINE_VERSION=11.21
 # The SHA-256 GitHub publishes for that release's wine-devel-…-osx64.tar.xz.
 WINE_SHA256=9909b486657e10ab66c7279371ae1f990345b596b3b1b3a0cf21f28af24fa0ce
-EXE=target/$TARGET/release/possum.exe
 
 tests=1 app=1 seconds=10 sound=0 run=0
 while [ $# -gt 0 ]; do
     case "$1" in
+        --arm64) TARGET=aarch64-pc-windows-msvc ARCH=aarch64 ;;
         --tests) app=0 ;;
         --run) run=1 tests=0 app=0 ;;
         --app)
@@ -60,6 +66,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+EXE=target/$TARGET/release/possum.exe
 step() { printf '\n== %s\n' "$*"; }
 fail() { echo "windows-test.sh: $*" >&2; exit 1; }
 
@@ -83,7 +90,13 @@ if ! command -v cargo-xwin >/dev/null; then
     cargo install --locked cargo-xwin
 fi
 
-if [ "$(uname -s)" = Darwin ]; then
+if [ "$(uname -s)" = Darwin ] && [ $ARCH = aarch64 ]; then
+    # MetalSharp Wine: Wine built for Apple Silicon, which runs ARM64 Windows
+    # programs natively. packaging/macos-wine/build.sh downloads it (1 GB).
+    wine_bin=$cache/wine-metalsharp-6.5/bin
+    [ -x "$wine_bin/wine" ] || fail "no ARM64 Wine yet: run packaging/macos-wine/build.sh first"
+    export PATH="$wine_bin:$PATH"
+elif [ "$(uname -s)" = Darwin ]; then
     arch -x86_64 /usr/bin/true 2>/dev/null ||
         fail "Wine needs Rosetta 2: softwareupdate --install-rosetta --agree-to-license"
     wine_dir=$cache/wine-devel-$WINE_VERSION
@@ -107,6 +120,7 @@ command -v wine >/dev/null || fail "needs Wine: sudo apt install wine, or sudo d
 # A Wine "C: drive" of Possum's own, away from ~/.wine. No .NET or HTML
 # engines (Wine would offer to download them), and no Wine debug chatter.
 export WINEPREFIX=$cache/wineprefix
+[ $ARCH = x86_64 ] || WINEPREFIX=$cache/wineprefix-$ARCH
 export WINEDLLOVERRIDES="mscoree,mshtml="
 export WINEDEBUG=-all MVK_CONFIG_LOG_LEVEL=0
 if [ ! -f "$WINEPREFIX/system.reg" ]; then
@@ -149,7 +163,7 @@ if [ $app = 1 ]; then
         fail "possum.exe needs the Visual C++ runtime"
     fi
     version=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
-    zip=dist/possum-${version:-dev}-windows-x86_64.zip
+    zip=dist/possum-${version:-dev}-windows-$ARCH.zip
     mkdir -p dist
     rm -f "$zip"
     zip -q -j "$zip" "$EXE" LICENSE README.md
