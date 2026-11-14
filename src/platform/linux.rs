@@ -386,7 +386,9 @@ fn probe_session() -> quiet::Probe {
 /// run as systemd user services outside any session, so ask logind for the
 /// user's graphical ("display") session instead.
 fn session_id() -> String {
-    if let Some(id) = std::env::var("XDG_SESSION_ID").ok().filter(|id| !id.is_empty()) {
+    if let Ok(id) = std::env::var("XDG_SESSION_ID")
+        && !id.is_empty()
+    {
         return id;
     }
     std::env::var("USER")
@@ -436,7 +438,7 @@ fn screensaver_active() -> Option<bool> {
 
 /// Parses a gdbus reply like `(true,)`.
 fn parse_gdbus_bool(text: &str) -> Option<bool> {
-    match text.trim().trim_start_matches('(').trim_end_matches(')').trim_end_matches(',') {
+    match text.trim().trim_prefix('(').trim_suffix(')').trim_suffix(',') {
         "true" => Some(true),
         "false" => Some(false),
         _ => None,

@@ -37,7 +37,7 @@ impl Reason {
 /// Something the system told us about. (Not every platform reports every
 /// one: Windows has no screensaver events, Linux only probes.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(all(not(target_os = "macos"), not(test)), expect(dead_code))]
 pub enum Event {
     ScreenLocked,
     ScreenUnlocked,
@@ -54,7 +54,7 @@ pub enum Event {
 /// macOS notifications that macOS broadcasts to every app through the
 /// distributed notification center. They aren't in any SDK header, but they have been
 /// stable for many macOS versions and are widely relied on.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(all(not(target_os = "macos"), not(test)), expect(dead_code))]
 pub const DISTRIBUTED_NOTIFICATIONS: [&str; 4] = [
     "com.apple.screenIsLocked",
     "com.apple.screenIsUnlocked",
@@ -63,7 +63,7 @@ pub const DISTRIBUTED_NOTIFICATIONS: [&str; 4] = [
 ];
 
 /// `NSWorkspace` notifications (their names are their own string values).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(all(not(target_os = "macos"), not(test)), expect(dead_code))]
 pub const WORKSPACE_NOTIFICATIONS: [&str; 6] = [
     "NSWorkspaceScreensDidSleepNotification",
     "NSWorkspaceScreensDidWakeNotification",
@@ -75,7 +75,7 @@ pub const WORKSPACE_NOTIFICATIONS: [&str; 6] = [
 
 impl Event {
     /// The event a macOS notification name stands for.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(all(not(target_os = "macos"), not(test)), expect(dead_code))]
     pub fn from_notification(name: &str) -> Option<Event> {
         Some(match name {
             "com.apple.screenIsLocked" => Event::ScreenLocked,
@@ -114,7 +114,7 @@ pub struct Quiet {
 }
 
 impl Quiet {
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(all(target_os = "linux", not(test)), expect(dead_code))]
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::ScreenLocked => self.screen_locked = true,

@@ -158,6 +158,7 @@ fn probe_system() -> quiet::Probe {
             if value.is_null() {
                 return None;
             }
+            // SAFETY: not null (checked above), and the session dictionary's values are all CF objects.
             let value: &CFType = unsafe { &*value.cast::<CFType>() };
             Some(value.downcast_ref::<CFBoolean>().is_none_or(CFBoolean::as_bool))
         };
@@ -202,6 +203,7 @@ impl SystemWatcher {
     /// Subscribes to lock, screensaver, sleep and display-change
     /// notifications. The watcher must stay alive while the app runs.
     fn start(mtm: MainThreadMarker) -> Retained<Self> {
+        // SAFETY: NSObject's plain `init`, on a freshly allocated watcher.
         let this: Retained<Self> = unsafe { msg_send![super(Self::alloc(mtm).set_ivars(())), init] };
         // SAFETY: the selectors exist on the watcher with the right
         // signature, and the watcher outlives the subscriptions.
@@ -305,6 +307,7 @@ fn overlay_window(mtm: MainThreadMarker, frame: CGRect) -> Retained<NSWindow> {
             false,
         )
     };
+    // SAFETY: `false` is the safe way round: our `Retained` owns the window, AppKit doesn't release it.
     unsafe { window.setReleasedWhenClosed(false) };
     window.setOpaque(false);
     window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -393,6 +396,7 @@ impl Hint {
         pixelated(&head);
         head.setAnchorPoint(CGPoint::new(0.0, 0.0));
         head.setBounds(rect(icon.w as f64 * Self::HEAD_SCALE, icon.h as f64 * Self::HEAD_SCALE));
+        // SAFETY: a layer's contents may be a CGImage.
         unsafe { head.setContents(Some(as_object(&cg_image(&icon, 1)))) };
         card.addSublayer(&head);
 
@@ -422,6 +426,7 @@ impl Hint {
         CATransaction::setDisableActions(true);
         // Sets a line's text and sizes the line to fit it.
         let fit = |layer: &CATextLayer, string: &str| {
+            // SAFETY: a text layer's string may be an NSString.
             unsafe { layer.setString(Some(&NSString::from_str(string))) };
             layer.setContentsScale(backing_scale);
             let s = layer.preferredFrameSize();
@@ -682,14 +687,16 @@ impl Possum {
         if self.shown != Some((scene.screaming, scene.frame)) {
             self.shown = Some((scene.screaming, scene.frame));
             let frames = if scene.screaming { &self.art.scream_frames } else { &self.art.run_frames };
+            // SAFETY: a layer's contents may be a CGImage.
             unsafe { self.body.setContents(Some(as_object(&frames[scene.frame]))) };
         }
         self.yell.setHidden(scene.yell.is_none());
-        if let Some(f) = scene.yell {
-            if self.yell_shown != Some(f) {
-                self.yell_shown = Some(f);
-                unsafe { self.yell.setContents(Some(as_object(&self.art.yell_frames[f]))) };
-            }
+        if let Some(f) = scene.yell
+            && self.yell_shown != Some(f)
+        {
+            self.yell_shown = Some(f);
+            // SAFETY: a layer's contents may be a CGImage.
+            unsafe { self.yell.setContents(Some(as_object(&self.art.yell_frames[f]))) };
         }
         self.bubble.setHidden(scene.bubble.is_none());
         if let Some(b) = scene.bubble {
@@ -698,6 +705,7 @@ impl Possum {
                 self.bubble_shown = Some(key);
                 self.bubble.setBounds(rect(b.w, b.h));
                 let image = &self.art.bubbles[brain::kind_index(b.kind)][b.shout][b.quadrant].image;
+                // SAFETY: a layer's contents may be a CGImage.
                 unsafe { self.bubble.setContents(Some(as_object(image))) };
             }
             self.bubble.setPosition(CGPoint::new(b.left, b.bottom));
@@ -740,13 +748,13 @@ define_class!(
             // Become the active app, so the menu takes the keyboard and
             // closes on a click elsewhere; then hand the focus back.
             let previous = NSWorkspace::sharedWorkspace().frontmostApplication();
-            #[allow(deprecated)] // its replacement, `activate`, needs macOS 14
+            #[expect(deprecated, reason = "its replacement, `activate`, needs macOS 14")]
             NSApplication::sharedApplication(self.mtm()).activateIgnoringOtherApps(true);
             menu.popUpMenuPositioningItem_atLocation_inView(None, NSEvent::mouseLocation(), None);
-            if let Some(previous) = previous {
-                if previous.processIdentifier() != std::process::id() as i32 {
-                    previous.activateWithOptions(NSApplicationActivationOptions::empty());
-                }
+            if let Some(previous) = previous
+                && previous.processIdentifier() != std::process::id().cast_signed()
+            {
+                previous.activateWithOptions(NSApplicationActivationOptions::empty());
             }
         }
     }
@@ -771,6 +779,7 @@ fn check_scream_mode() {
 impl MenuTarget {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
+        // SAFETY: NSObject's plain `init`, on a freshly allocated target.
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -791,6 +800,7 @@ fn menu_item(
             &NSString::from_str(key),
         )
     };
+    // SAFETY: menu items don't retain their target; the MenuTarget lives as long as the app (see `run`).
     unsafe { item.setTarget(target) };
     item
 }
@@ -864,8 +874,9 @@ mod carbon {
     pub const CONTROL_OPTION_COMMAND: u32 = 0x1000 | 0x0800 | 0x0100;
 
     #[link(name = "Carbon", kind = "framework")]
-    extern "C" {
-        pub fn GetApplicationEventTarget() -> *mut c_void;
+    unsafe extern "C" {
+        /// Just returns the app's event target: nothing can go wrong.
+        pub safe fn GetApplicationEventTarget() -> *mut c_void;
         pub fn InstallEventHandler(
             target: *mut c_void,
             handler: Handler,
@@ -913,7 +924,8 @@ unsafe extern "C" fn shortcut_pressed(_next: *mut c_void, _event: *mut c_void, t
     // SAFETY: `target` is the MenuTarget given to `register_shortcut`.
     let target = unsafe { &*target.cast::<MenuTarget>() };
     // Open the menu once this event is handled: a menu runs an event loop
-    // of its own.
+    // of its own. SAFETY: `showMenu:` exists on MenuTarget and takes one
+    // (unused) object.
     let _: () = unsafe {
         msg_send![target, performSelector: sel!(showMenu:), withObject: None::<&AnyObject>, afterDelay: 0.0f64]
     };

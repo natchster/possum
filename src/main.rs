@@ -17,7 +17,7 @@ mod brain;
 mod platform;
 mod png;
 mod quiet;
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(target_os = "macos", expect(dead_code))]
 mod render;
 mod scream;
 mod screens;
@@ -136,9 +136,9 @@ fn parse_args() -> Options {
 fn write_png(path: &std::path::Path, c: &Canvas, scale: usize, bg: Option<[u8; 3]>) {
     let mut rgba = c.rgba_scaled(scale);
     if let Some([r, g, b]) = bg {
-        for px in rgba.chunks_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             if px[3] == 0 {
-                px.copy_from_slice(&[r, g, b, 255]);
+                *px = [r, g, b, 255];
             }
         }
     }

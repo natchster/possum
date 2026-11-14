@@ -16,6 +16,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Any warning, from the compiler or Clippy, fails the job.
+  CARGO_BUILD_WARNINGS: deny
 
 jobs:
   macos:
@@ -25,7 +27,7 @@ jobs:
       - name: Rust targets for a universal app
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets
       - name: Test (Apple Silicon)
         run: cargo test --target aarch64-apple-darwin
       - name: Test (Intel, via Rosetta)
@@ -41,7 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets
       - name: Test
         run: cargo test
       - name: Build
@@ -64,11 +66,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: "ubuntu:26.04", name: ubuntu-26.04, family: debian, rust: rustup }
-          - { image: "ubuntu:26.10", name: ubuntu-26.10, family: debian, rust: rustup }
-          - { image: "fedora:45", name: fedora-45, family: fedora, rust: rustup }
-          # Debian's own packaged Rust: proves the minimum (1.85) is enough.
-          - { image: "debian:13", name: debian-13, family: debian, rust: distro }
+          - { image: "ubuntu:26.04", name: ubuntu-26.04, family: debian }
+          - { image: "ubuntu:26.10", name: ubuntu-26.10, family: debian }
+          - { image: "fedora:45", name: fedora-45, family: fedora }
+          - { image: "debian:13", name: debian-13, family: debian }
     steps:
       - name: Install packages (Debian, Ubuntu)
         if: matrix.family == 'debian'
@@ -76,24 +77,24 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl git gcc libc6-dev \
-            xvfb x11-xserver-utils imagemagick \
-            ${{ matrix.rust == 'distro' && 'cargo rustc rust-clippy' || '' }}
+            xvfb x11-xserver-utils imagemagick
       - name: Install packages (Fedora)
         if: matrix.family == 'fedora'
         run: |
           dnf install -y --skip-unavailable \
             ca-certificates curl git gcc glibc-devel \
             xorg-x11-server-Xvfb xsetroot ImageMagick
-      - name: Install Rust (rustup)
-        if: matrix.rust == 'rustup'
+      # rustup alone: the first cargo command installs the Rust (and Clippy)
+      # that rust-toolchain.toml names.
+      - name: Install rustup
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -c clippy
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v7
       - name: Rust version
         run: rustc --version && cargo --version
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets
       - name: Test
         run: cargo test
       - name: Build

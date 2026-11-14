@@ -35,7 +35,7 @@ impl Image {
     /// The opaque pixels as horizontal runs `(x, y, width)`, one row at a
     /// time: the shape of a window that shows exactly this image (Linux
     /// cuts its windows to this shape instead of blending alpha).
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(all(not(target_os = "linux"), not(test)), expect(dead_code))]
     pub fn opaque_runs(&self) -> Vec<(usize, usize, usize)> {
         let mut runs = Vec::new();
         for y in 0..self.h {
@@ -57,14 +57,14 @@ impl Image {
     }
 
     /// Same image as ARGB32 in network byte order (for Linux tray icons).
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(all(not(target_os = "linux"), not(test)), expect(dead_code))]
     pub fn argb_be(&self) -> Vec<u8> {
-        self.bgra.chunks(4).flat_map(|p| [p[3], p[2], p[1], p[0]]).collect()
+        self.bgra.as_chunks().0.iter().flat_map(|&[b, g, r, a]| [a, r, g, b]).collect()
     }
 
     #[cfg(test)]
     pub fn opaque_pixels(&self) -> usize {
-        self.bgra.chunks(4).filter(|p| p[3] != 0).count()
+        self.bgra.as_chunks::<4>().0.iter().filter(|p| p[3] != 0).count()
     }
 }
 
@@ -270,7 +270,7 @@ mod tests {
                 covered[y * img.w + i] = true;
             }
         }
-        for (i, px) in img.bgra.chunks(4).enumerate() {
+        for (i, px) in img.bgra.as_chunks::<4>().0.iter().enumerate() {
             assert_eq!(covered[i], px[3] != 0, "pixel {i}");
         }
     }

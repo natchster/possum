@@ -195,12 +195,13 @@ pub struct Scream {
 impl Scream {
     /// The WAV with its samples scaled to `volume` (0..1), for players that
     /// can't set a volume themselves.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(all(target_os = "macos", not(test)), expect(dead_code))]
     pub fn wav_at_volume(&self, volume: f32) -> Vec<u8> {
         let mut wav = self.wav.clone();
-        for sample in wav[44..].chunks_exact_mut(2) {
-            let v = i16::from_le_bytes([sample[0], sample[1]]) as f32 * volume.clamp(0.0, 1.0);
-            sample.copy_from_slice(&(v.round() as i16).to_le_bytes());
+        let (samples, _) = wav[44..].as_chunks_mut::<2>();
+        for sample in samples {
+            let v = i16::from_le_bytes(*sample) as f32 * volume.clamp(0.0, 1.0);
+            *sample = (v.round() as i16).to_le_bytes();
         }
         wav
     }
@@ -354,7 +355,7 @@ mod tests {
 
     /// Zero crossings per second: a cheap stand-in for "how bright/hissy".
     fn zcr(x: &[f32]) -> f32 {
-        let crossings = x.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count();
+        let crossings = x.array_windows().filter(|&&[a, b]| (a >= 0.0) != (b >= 0.0)).count();
         crossings as f32 / (x.len() as f32 / SR)
     }
 
@@ -376,7 +377,7 @@ mod tests {
         assert_eq!(half.len(), s.wav.len());
         assert_eq!(&half[..44], &s.wav[..44]);
         let peak = |w: &[u8]| {
-            w[44..].chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap()
+            w[44..].as_chunks().0.iter().map(|&b| i16::from_le_bytes(b).unsigned_abs()).max().unwrap()
         };
         let (full, scaled) = (peak(&s.wav), peak(&half));
         assert!((scaled as f32 - full as f32 * 0.5).abs() <= 1.0, "{full} -> {scaled}");
@@ -441,7 +442,7 @@ mod tests {
     fn aaaa_voice_is_bit_identical_to_the_first_version_on_macos() {
         // On macOS, where the first version ran, it must match exactly:
         // checksums of the v0.1 code's 16-bit output on each architecture.
-        let checksum = aaaa_pcm().iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(v as u16 as u64));
+        let checksum = aaaa_pcm().iter().fold(0u64, |h, &v| h.wrapping_mul(31).wrapping_add(u64::from(v.cast_unsigned())));
         assert_eq!(checksum, GOLDEN_AAAA_CHECKSUM);
     }
 

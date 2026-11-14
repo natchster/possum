@@ -34,7 +34,7 @@ click: see [Download](docs/GUIDE.md#download) in the guide.
 ## Build it yourself
 
 Possum runs on **macOS**, **Windows** and **Linux**. You need
-[Rust](https://rustup.rs) (1.85 or newer), then:
+[Rust](https://rustup.rs) (1.100 or newer), then:
 
 **macOS** 11 or later, with the Xcode Command Line Tools
 (`xcode-select --install`):
@@ -52,7 +52,8 @@ target\release\possum.exe
 ```
 
 **Linux** (tested on Ubuntu 26.04 and 26.10, Fedora 45, Debian 13), with
-`gcc` (`sudo apt install cargo gcc` or `sudo dnf install cargo gcc`):
+Rust from [rustup.rs](https://rustup.rs) and `gcc` (`sudo apt install gcc`
+or `sudo dnf install gcc`):
 
 ```sh
 cargo build --release

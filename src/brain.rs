@@ -21,7 +21,7 @@ pub static SILENT: AtomicBool = AtomicBool::new(false);
 pub static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
 /// Set by the Linux tray's "Quit" (macOS and Windows quit through their own
 /// event loops).
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(target_os = "linux"), expect(dead_code))]
 pub static QUIT: AtomicBool = AtomicBool::new(false);
 
 /// What the speech bubble says in "Scream silently" mode, per kind of scream.
@@ -199,7 +199,7 @@ impl Brain {
 
     /// Something the system told the platform (lock, screensaver...). Linux
     /// only probes, so it has no events.
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(all(target_os = "linux", not(test)), expect(dead_code))]
     pub fn apply(&mut self, event: quiet::Event) {
         self.log(format_args!("the system says: {event:?}"));
         self.quiet.apply(event);
@@ -214,7 +214,7 @@ impl Brain {
     /// macOS: whether the menu-bar icon fits, which decides whether the very
     /// first scream is out loud). A scream that came due meanwhile starts
     /// as soon as the hold is lifted. The possum keeps running either way.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(all(not(target_os = "macos"), not(test)), expect(dead_code))]
     pub fn hold_screams(&mut self, hold: bool) {
         self.holding = hold;
     }
@@ -435,8 +435,8 @@ mod tests {
         run(&mut b, &mut host, 0.0, 30.0);
         assert!(host.played.len() >= 5, "only {} screams in 30 s", host.played.len());
         assert_eq!(host.played[0].0, Kind::Aaaa);
-        for pair in host.played.windows(2) {
-            assert_ne!(pair[0].0, pair[1].0, "two of the same kind in a row");
+        for [(a, _), (b, _)] in host.played.array_windows() {
+            assert_ne!(a, b, "two of the same kind in a row");
         }
     }
 

@@ -388,7 +388,7 @@ fn draw_tail(c: &mut Canvas, dy: f32, wiggle: f32) {
 
 /// Cheap integer hash for stable "random" fur texture.
 fn hash(x: i32, y: i32) -> u32 {
-    let mut h = (x as u32).wrapping_mul(0x27d4_eb2d) ^ (y as u32).wrapping_mul(0x1656_67b1);
+    let mut h = x.cast_unsigned().wrapping_mul(0x27d4_eb2d) ^ y.cast_unsigned().wrapping_mul(0x1656_67b1);
     h = (h ^ (h >> 15)).wrapping_mul(0x85eb_ca6b);
     h ^ (h >> 13)
 }

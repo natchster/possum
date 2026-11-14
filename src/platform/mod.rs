@@ -2,23 +2,23 @@
 //! menu, and lock/display detection. Everything else (where the possum runs,
 //! when it screams, when it keeps quiet) is shared; see brain.rs.
 
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-pub use macos::run;
-
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-pub use windows::{prepare_console, run};
-
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(target_os = "linux")]
-pub use linux::run;
-
-#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
-compile_error!("Possum runs on macOS, Windows and Linux.");
+cfg_select! {
+    target_os = "macos" => {
+        mod macos;
+        pub use macos::run;
+    }
+    windows => {
+        mod windows;
+        pub use windows::{prepare_console, run};
+    }
+    target_os = "linux" => {
+        mod linux;
+        pub use linux::run;
+    }
+    _ => {
+        compile_error!("Possum runs on macOS, Windows and Linux.");
+    }
+}
 
 /// Nothing to set up before printing on macOS and Linux (see the Windows
 /// version).

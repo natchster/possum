@@ -1,0 +1,8 @@
+# The Rust that builds Possum, everywhere rustup is used (locally, CI and
+# releases): rustup installs it on first use. Bump it on purpose, after a
+# release's point fixes have landed (1.99.1, for one, fixed FFI `bool`
+# returns on x86_64, which the Intel half of the Mac app relies on).
+[toolchain]
+channel = "1.100"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

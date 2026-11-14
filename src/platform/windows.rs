@@ -149,7 +149,7 @@ pub fn run(opts: &Options) {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             lpszClassName: class.as_ptr(),
-            ..std::mem::zeroed()
+            ..Default::default()
         };
         RegisterClassW(&wc);
         let title = wide("Possum");
@@ -212,7 +212,7 @@ pub fn run(opts: &Options) {
 
     // SAFETY: the standard message loop.
     unsafe {
-        let mut msg: MSG = std::mem::zeroed();
+        let mut msg = MSG::default();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -234,8 +234,7 @@ fn primary_monitor() -> (screens::Rect, f64) {
     // SAFETY: plain Win32 queries with valid out-pointers.
     unsafe {
         let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         GetMonitorInfoW(monitor, &mut info);
         let r = info.rcMonitor;
         let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
@@ -251,10 +250,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             APP.with(|app| {
                 // A menu's modal loop can deliver timer ticks while the menu
                 // code runs; it never holds the app, so this can't clash.
-                if let Ok(mut app) = app.try_borrow_mut() {
-                    if let Some(app) = app.as_mut() {
-                        app.tick();
-                    }
+                if let Ok(mut app) = app.try_borrow_mut()
+                    && let Some(app) = app.as_mut()
+                {
+                    app.tick();
                 }
             });
             with_tray(Tray::retry);
@@ -286,7 +285,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND => Some(quiet::Event::SystemDidWake),
                 PBT_POWERSETTINGCHANGE => {
                     // SAFETY: for this message, lparam points at the setting.
-                    let setting = &*(lparam as *const POWERBROADCAST_SETTING);
+                    let setting = unsafe { &*(lparam as *const POWERBROADCAST_SETTING) };
                     let display = |guid: &windows_sys::core::GUID| {
                         (guid.data1, guid.data2, guid.data3, guid.data4)
                             == (
@@ -316,13 +315,15 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_DISPLAYCHANGE => {
             DISPLAYS_CHANGED.store(true, Ordering::Relaxed);
-            DefWindowProcW(hwnd, msg, wparam, lparam)
+            // SAFETY: passes the message on as Windows gave it to us.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         _ if msg != 0 && msg == TASKBAR_CREATED.load(Ordering::Relaxed) => {
             with_tray(Tray::taskbar_created);
             0
         }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        // SAFETY: passes the message on as Windows gave it to us.
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
 
@@ -331,9 +332,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 // ---------------------------------------------------------------------------
 
 fn tray_data(main: HWND) -> NOTIFYICONDATAW {
-    // SAFETY: NOTIFYICONDATAW is plain data; all-zero is a valid start.
-    let mut data: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
-    data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+    let mut data = NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, ..Default::default() };
     data.hWnd = main;
     data.uID = 1;
     data
@@ -421,10 +420,10 @@ impl Drop for Tray {
 /// deliver messages while tray code runs).
 fn with_tray(f: impl FnOnce(&mut Tray)) {
     TRAY.with(|tray| {
-        if let Ok(mut tray) = tray.try_borrow_mut() {
-            if let Some(tray) = tray.as_mut() {
-                f(tray);
-            }
+        if let Ok(mut tray) = tray.try_borrow_mut()
+            && let Some(tray) = tray.as_mut()
+        {
+            f(tray);
         }
     });
 }
@@ -497,21 +496,26 @@ fn show_menu(main: HWND) {
 // Drawing
 // ---------------------------------------------------------------------------
 
-/// A top-down 32-bit DIB section and a pointer to its pixels.
-unsafe fn dib_section(w: usize, h: usize) -> (windows_sys::Win32::Graphics::Gdi::HBITMAP, *mut u8) {
-    let mut bmi: BITMAPINFO = std::mem::zeroed();
-    bmi.bmiHeader = BITMAPINFOHEADER {
-        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: w as i32,
-        biHeight: -(h as i32), // negative: rows top-down, like our images
-        biPlanes: 1,
-        biBitCount: 32,
-        biCompression: BI_RGB,
-        ..std::mem::zeroed()
+/// A top-down 32-bit DIB section and a pointer to its `w * h * 4` bytes of
+/// pixels (null if Windows couldn't make one). The caller deletes it.
+fn dib_section(w: usize, h: usize) -> (windows_sys::Win32::Graphics::Gdi::HBITMAP, *mut u8) {
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w as i32,
+            biHeight: -(h as i32), // negative: rows top-down, like our images
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            ..Default::default()
+        },
+        ..Default::default()
     };
     let mut bits: *mut c_void = null_mut();
-    let bitmap = CreateDIBSection(null_mut(), &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-    (bitmap, bits as *mut u8)
+    // SAFETY: a valid BITMAPINFO and out-pointer; no device context needed
+    // for an RGB DIB.
+    let bitmap = unsafe { CreateDIBSection(null_mut(), &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0) };
+    (bitmap, bits.cast())
 }
 
 /// One of the layered windows.

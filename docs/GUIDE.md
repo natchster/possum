@@ -43,14 +43,14 @@ It's a tribute to the **«бежит орёт»** ("runs, screams") opossum meme
 |---|---|---|---|
 | **System** | macOS 11 Big Sur or later | Windows 10 (version 1703 or later) or Windows 11 | Tested on **Ubuntu 26.04 LTS and 26.10, Fedora 45, Debian 13**; other distributions with X11 or XWayland should work |
 | **Processor** | Apple Silicon or Intel (one universal app) | x86-64; Windows on Arm runs it through its built-in emulation | x86-64 or ARM64 |
-| **To build** | Rust 1.85+ and the Xcode Command Line Tools | Rust 1.85+ and the Visual Studio C++ Build Tools | Rust 1.85+ and `gcc` (as the linker) |
+| **To build** | Rust 1.100+ and the Xcode Command Line Tools | Rust 1.100+ and the Visual Studio C++ Build Tools | Rust 1.100+ and `gcc` (as the linker) |
 | **To run** | Nothing else | Nothing else | An X11 session, or a Wayland session with XWayland (GNOME and KDE start it automatically); one of `pw-play`, `paplay` or `aplay` for sound (desktop installs have at least one) |
 | **Permissions** | None | None | None |
 
-Rust 1.85 is the oldest version Possum builds with. That's the version
-Debian 13 packages, so its own `cargo` works; elsewhere, use your
-distribution's Rust if it's new enough, or install it from
-[rustup.rs](https://rustup.rs).
+Possum builds with Rust 1.100, the version in `rust-toolchain.toml`:
+install Rust from [rustup.rs](https://rustup.rs) and `cargo` fetches that
+version by itself the first time. Linux distributions' own Rust packages are
+older, so they won't do.
 
 ## Download
 
@@ -160,14 +160,14 @@ Windows scales the possum like everything else: at 150% display scaling it's
 
 ## Build and run on Linux
 
-1. Install Rust and a linker. With your distribution's packages:
+1. Install a linker and Git with your distribution's packages, and Rust
+   from [rustup.rs](https://rustup.rs) (distributions package older Rust):
 
    ```sh
-   sudo apt install cargo gcc git      # Ubuntu, Debian
-   sudo dnf install cargo gcc git      # Fedora
+   sudo apt install gcc git      # Ubuntu, Debian
+   sudo dnf install gcc git      # Fedora
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
-
-   Or install Rust from [rustup.rs](https://rustup.rs) (you still need `gcc`).
 2. Get the code and build it:
 
    ```sh
@@ -503,8 +503,9 @@ identical to the original.
 
 The [CI workflow](../.github/workflows/ci.yml) runs all of this on every
 push, on **macOS** (Apple Silicon, and Intel through Rosetta), **Windows**,
-**Ubuntu 26.04 LTS and 26.10**, **Fedora 45** and **Debian 13** (with
-Debian's own Rust 1.85). It also starts the real app on each of them (a bare
+**Ubuntu 26.04 LTS and 26.10**, **Fedora 45** and **Debian 13**, with the
+Rust from `rust-toolchain.toml`, and fails on any compiler or Clippy
+warning. It also starts the real app on each of them (a bare
 virtual X server on Linux, without a compositor) and keeps screenshots and
 logs as artifacts.
 
