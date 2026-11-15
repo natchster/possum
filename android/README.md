@@ -26,7 +26,7 @@ files in `../src` (see `src/lib.rs`), and a small Java app does what
 |---|---|---|
 | The overlay | a transparent, click-through window | an "appear on top" window on the best display (`Stage.java`) |
 | The menu | menu-bar or tray icon | the notification: Scream / Scream silently, Scream Now, Quit Possum |
-| Keeping quiet | locked screen, display off | the same, plus silent mode, Do Not Disturb and calls (it screams in bubbles then) |
+| Keeping quiet | locked screen, display off; Do Not Disturb on Windows and Linux | the same, plus silent and vibrate mode, Do Not Disturb and calls: it screams in bubbles then, and Scream Now is still heard, except on a call (`PossumService.probe`) |
 | Sound | the system's player | `AudioTrack` (`Voices.java`) |
 
 What Android doesn't allow:
@@ -78,6 +78,12 @@ this folder tests the Rust half on the computer.
 
 If it stops by itself after a while, Samsung's battery saving put it to
 sleep: App info → Battery → **Unrestricted**.
+
+If you can't hear it, its notification says why: the phone is set to
+silent, vibrate or Do Not Disturb (Possum respects that and screams in
+speech bubbles; Scream Now is still heard), or the media volume is down.
+The screams play at the **media** volume, through wherever Android sends
+media: with DeX, often the monitor or TV. The app's screen says where.
 
 What it's doing, as it does it (which display it picked and why, each
 scream, when it keeps quiet):

@@ -35,6 +35,10 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 - It ignores clicks and never steals focus, so it never gets in your way.
 - It keeps quiet while the screen is locked, the display is off, or the
   screensaver is running (see [Staying quiet](#staying-quiet)).
+- In **Do Not Disturb** (Windows, Linux desktops, Android) or with a phone
+  set to silent or vibrate, it screams silently, in speech bubbles: Possum
+  respects you. **Scream Now** is still heard (see
+  [Do Not Disturb](#do-not-disturb)).
 - It always runs around your main display, and follows it when that
   changes (see [Multiple displays](#multiple-displays)).
 
@@ -60,8 +64,16 @@ brain, the sprites and the screams, with a small Java app around it.
 - **The menu** is Possum's notification: **Scream** / **Scream silently**,
   **Scream Now** and **Quit Possum**.
 - **Keeping quiet:** besides a locked screen and a display that's off, it
-  screams silently (in speech bubbles) while the phone is on silent, in Do
-  Not Disturb, or in a call.
+  screams silently (in speech bubbles) while the phone is set to silent or
+  vibrate, to Do Not Disturb, or on a call. Scream Now still screams out
+  loud, except on a call (see [Do Not Disturb](#do-not-disturb)).
+- **No sound?** Look at Possum's notification: it says when the phone asks
+  for quiet, and when the media volume is all the way down. The screams play
+  at the **media** volume (on Samsung phones the volume keys set the
+  ringtone volume unless something is playing: turn media up in the volume
+  panel), through wherever Android sends media. With DeX that's often the
+  monitor or TV, whose speakers may be off or missing; the app's screen says
+  where they play.
 - **What Android doesn't allow:** the status bar, the taskbar, the
   notification shade and the lock screen stay above other apps' windows, so
   the possum runs inside the system bars rather than over them; and Android
@@ -515,9 +527,9 @@ mouse pointer, wherever the icon is.
 
 | Item | What it does |
 |------|--------------|
-| **Scream** *(default)* | You hear the scream; no speech bubble |
+| **Scream** *(default)* | You hear the scream; no speech bubble. In Do Not Disturb, it says so instead (see below) |
 | **Scream silently** | No sound; an upright speech bubble instead (`AAAAAAAAH!` or `HSSSSSS!`) |
-| **Scream Now** | Makes it scream right away |
+| **Scream Now** | Makes it scream right away, out loud even in Do Not Disturb (but not on a call) |
 | **Quit Possum** | Quits (Ctrl+C also works if you started it from a terminal) |
 
 **When the Mac's menu bar is too full**, macOS silently leaves some icons
@@ -675,6 +687,41 @@ possum [   14.23s] free to scream again
 possum [   15.79s] hiss: out loud
 ```
 
+### Do Not Disturb
+
+When your computer or phone asks apps to be quiet but you're still there to
+see the possum, it **screams silently**, in speech bubbles, just as if you'd
+picked **Scream silently**: Possum respects you. Once that's over, it goes
+back to what you picked.
+
+- **Scream Now** is still heard: you asked for it right then. Not during a
+  call, though.
+- The menu shows **Scream silently** as picked meanwhile. Choosing
+  **Scream** says that your computer (or phone) is set to Do Not Disturb (or
+  silent, or vibrate) and Possum respects you; it's remembered for when
+  that's over. Windows says it in a message box, Linux in a notification
+  (marked critical: desktops show those even in Do Not Disturb, and it's the
+  answer to your click), Android at the bottom of the screen.
+- If it comes on mid-scream, the sound stops at once and the rest of the
+  scream is a bubble.
+
+| | When | How Possum tells (once a second, and right before every scream) |
+|---|---|---|
+| **Android** | Silent or vibrate mode, Do Not Disturb, a call | `AudioManager`'s ringer mode and audio mode (calls), and `NotificationManager`'s interruption filter, also as they change |
+| **Windows** | Do Not Disturb (Focus assist on Windows 10), presentation mode | The active "quiet hours" profile, as Windows' own shell reads it (the Windows Notification Facility, through `NtQueryWnfStateData`: undocumented, so where it's missing, as under Wine, Possum can't tell), and `SHQueryUserNotificationState` |
+| **Linux** | Do Not Disturb in GNOME (and Ubuntu's), KDE Plasma, Cinnamon, MATE and Xfce | GNOME's `show-banners`, Cinnamon's `display-notifications` and MATE's `do-not-disturb` settings, Xfce's `/do-not-disturb` (`xfconf-query`), and otherwise the notification server's `Inhibited` property (KDE Plasma) |
+| **macOS** | Can't tell | macOS only tells apps that Apple gives a special entitlement whether a Focus is on, and keeps that state in files only apps with Full Disk Access may read. Pick **Scream silently** yourself while you need quiet |
+
+With `--verbose` (on Android, in `adb logcat -s possum`):
+
+```
+possum [   18.99s] Do Not Disturb is on: screaming silently
+possum [   20.44s] hiss: silently, in a speech bubble, because Do Not Disturb is on
+possum [   45.69s] AAAA: out loud, for Scream Now, although Do Not Disturb is on
+possum [  116.37s] the system no longer asks for quiet
+possum [  117.39s] hiss: out loud
+```
+
 ## Multiple displays
 
 The possum runs around the **primary display**: the one with the menu bar
@@ -746,8 +793,9 @@ cargo test
 
 The tests cover the possum's behaviour (it screams right away, alternates
 AAAA and hiss, keeps quiet while locked, cuts a scream off when the screen
-locks, shows a bubble only in silent mode and keeps it on screen, holds its
-first scream while asked to); on macOS, telling whether the menu-bar icon
+locks, shows a bubble only in silent mode and keeps it on screen, screams
+silently in Do Not Disturb with Scream Now still heard (but not on a call),
+holds its first scream while asked to); on macOS, telling whether the menu-bar icon
 fits from the spots macOS 27 really uses, and the note's five seconds; the
 counterclockwise track on screens of every shape and keeping the same edge
 after a screen change; following the primary display through every kind of
@@ -765,8 +813,12 @@ virtual X server on Linux, without a compositor) and keeps screenshots and
 logs as artifacts. For **Android**, it lints and tests the Android crate,
 builds the APK, and runs it on an Android 16 emulator: installed, allowed
 to appear on top, started from its own screen, then a second display is
-plugged in (an emulated one, as DeX's monitor is to the phone), with
-screenshots and Possum's log.
+plugged in (an emulated one, as DeX's monitor is to the phone), then Do Not
+Disturb comes on and **Scream Now** is tapped in its notification, with
+screenshots and Possum's log. Android's own record of what played must
+show its screams playing, and in Do Not Disturb they must be silent, apart
+from Scream Now. On Linux, it also runs once with GNOME's Do Not Disturb
+on, which must make it scream silently.
 
 ### Release builds
 
@@ -803,7 +855,8 @@ downloaded onto a clean machine, unpacked or installed, and run.
   the ARM64 and the x86-64 library, and alignment for phones with 16 KB
   memory pages. Then, on emulators with **Android 12** (the oldest it runs
   on) **and Android 16**: installed with `adb`, allowed to appear on top,
-  and started; it must show its overlay, run around, scream, and still be
+  and started; it must show its overlay, run around, scream (and Android
+  must really play it), scream silently in Do Not Disturb, and still be
   running after a second display comes and goes. The release key lives in
   the repository's secrets: `ANDROID_KEYSTORE_BASE64` (a PKCS#12 keystore,
   in base64, with the key under the alias `possum`) and
