@@ -162,12 +162,17 @@ pub fn run(opts: &Options) {
     if wine_on_mac() {
         brain.log(format_args!("keeping below the Mac's menu bar and above its Dock"));
     }
-    let dnd = match do_not_disturb() {
-        Some(true) => "on",
-        Some(false) => "off",
-        None => "can't tell on this Windows",
+    // What Windows says, as it says it: the quiet-hours profile (0 off, 1
+    // priority only, 2 alarms only) and the shell's notification state
+    // (QUNS_*: 5 accepts notifications, 4 presentation mode, 6 the quiet
+    // first hour after setting Windows up...).
+    let dnd = match quiet_hours_profile() {
+        Some(0) => "off".to_string(),
+        Some(profile) => format!("on (quiet-hours profile {profile})"),
+        None => "can't tell on this Windows".to_string(),
     };
-    brain.log(format_args!("Do Not Disturb: {dnd}"));
+    let state = notification_state().map_or("unknown".to_string(), |s| s.to_string());
+    brain.log(format_args!("Do Not Disturb: {dnd}; notification state {state}"));
 
     // SAFETY: standard window-class registration and window creation.
     let (main, possum, bubble) = unsafe {
@@ -288,22 +293,25 @@ fn primary_monitor() -> (screens::Rect, f64) {
 /// Whether Windows asks apps for quiet: Do Not Disturb (Focus assist before
 /// Windows 11), or presentation mode.
 fn system_hush() -> Option<Hush> {
-    if do_not_disturb() == Some(true) {
+    if quiet_hours_profile().is_some_and(|profile| profile != 0) {
         return Some(Hush::DoNotDisturb);
     }
-    let mut state = 0;
-    // SAFETY: a plain query with a valid out-pointer.
-    let ok = unsafe { SHQueryUserNotificationState(&mut state) } >= 0;
-    (ok && state == QUNS_PRESENTATION_MODE).then_some(Hush::Presenting)
+    (notification_state() == Some(QUNS_PRESENTATION_MODE)).then_some(Hush::Presenting)
 }
 
-/// Whether Do Not Disturb is on. Windows has no documented way to ask, so
-/// this reads what its own shell reads: the active "quiet hours" profile in
-/// the Windows Notification Facility (WNF), through ntdll's
-/// `NtQueryWnfStateData`. 0 is off; anything else is a profile that holds
-/// notifications back (priority only, alarms only). None when this Windows
-/// (or Wine) doesn't have it.
-fn do_not_disturb() -> Option<bool> {
+/// The shell's `SHQueryUserNotificationState`, if it answers.
+fn notification_state() -> Option<i32> {
+    let mut state = 0;
+    // SAFETY: a plain query with a valid out-pointer.
+    (unsafe { SHQueryUserNotificationState(&mut state) } >= 0).then_some(state)
+}
+
+/// The active "quiet hours" profile: 0 while Do Not Disturb is off, else a
+/// profile that holds notifications back (1 priority only, 2 alarms only).
+/// Windows has no documented way to ask, so this reads what its own shell
+/// reads, in the Windows Notification Facility (WNF), through ntdll's
+/// `NtQueryWnfStateData`. None when this Windows (or Wine) doesn't have it.
+fn quiet_hours_profile() -> Option<u32> {
     type Query = unsafe extern "system" fn(
         state: *const u64,
         type_id: *const c_void,
@@ -328,7 +336,7 @@ fn do_not_disturb() -> Option<bool> {
     let status =
         unsafe { query(&QUIET_HOURS_PROFILE, null(), null(), &mut stamp, (&raw mut profile).cast(), &mut size) };
     // No data at all: never switched on since Windows started.
-    (status >= 0).then_some(size != 0 && profile != 0)
+    (status >= 0).then_some(if size == 0 { 0 } else { profile })
 }
 
 /// Says why "Scream" stays silent for now, in a message box on its own

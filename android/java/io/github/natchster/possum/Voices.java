@@ -11,7 +11,8 @@ import android.util.Log;
  * The screams, ready to play: one preloaded AudioTrack per variation. They
  * play as media, at the media volume, through wherever Android sends media:
  * with DeX or a monitor that's often the monitor (HDMI), so the log says
- * where.
+ * where. Android can refuse to make one (its audio service still starting
+ * up, say): then it's made again when that scream is due.
  */
 final class Voices {
     /** As loud as the desktop app's default. */
@@ -20,7 +21,19 @@ final class Voices {
     /** For the app screen: where the screams last played, or null. */
     static volatile String route;
 
+    private final AudioAttributes attributes = new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build();
+    private final AudioFormat format = new AudioFormat.Builder()
+            .setSampleRate(Native.sampleRate())
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+            .build();
+    private final short[][][] samples = new short[2][][];
     private final AudioTrack[][] tracks = new AudioTrack[2][];
+    /** The last try to make or play a scream failed (said once, not every time). */
+    private boolean failing;
     private final AudioRouting.OnRoutingChangedListener routed = router -> {
         AudioDeviceInfo device = router.getRoutedDevice();
         String where = device == null ? null : describe(device);
@@ -31,35 +44,34 @@ final class Voices {
     };
 
     Voices() {
-        AudioAttributes attributes = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build();
-        AudioFormat format = new AudioFormat.Builder()
-                .setSampleRate(Native.sampleRate())
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .build();
         for (int kind = 0; kind < tracks.length; kind++) {
-            tracks[kind] = new AudioTrack[Native.voiceCount(kind)];
-            for (int variant = 0; variant < tracks[kind].length; variant++) {
-                short[] samples = Native.voice(kind, variant);
-                if (samples == null) continue;
-                try {
-                    AudioTrack track = new AudioTrack.Builder()
-                            .setAudioAttributes(attributes)
-                            .setAudioFormat(format)
-                            .setTransferMode(AudioTrack.MODE_STATIC)
-                            .setBufferSizeInBytes(samples.length * 2)
-                            .build();
-                    track.write(samples, 0, samples.length);
-                    track.setVolume(VOLUME);
-                    track.addOnRoutingChangedListener(routed, null);
-                    tracks[kind][variant] = track;
-                } catch (RuntimeException e) {
-                    Log.w(PossumService.TAG, "can't prepare a scream", e);
-                }
+            int count = Native.voiceCount(kind);
+            samples[kind] = new short[count][];
+            tracks[kind] = new AudioTrack[count];
+            for (int variant = 0; variant < count; variant++) {
+                samples[kind][variant] = Native.voice(kind, variant);
+                tracks[kind][variant] = make(samples[kind][variant]);
             }
+        }
+    }
+
+    /** A track that plays these samples, or null if Android won't make one now. */
+    private AudioTrack make(short[] pcm) {
+        if (pcm == null) return null;
+        try {
+            AudioTrack track = new AudioTrack.Builder()
+                    .setAudioAttributes(attributes)
+                    .setAudioFormat(format)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(pcm.length * 2)
+                    .build();
+            track.write(pcm, 0, pcm.length);
+            track.setVolume(VOLUME);
+            track.addOnRoutingChangedListener(routed, null);
+            return track;
+        } catch (RuntimeException e) {
+            failed("can't prepare a scream", e);
+            return null;
         }
     }
 
@@ -67,16 +79,32 @@ final class Voices {
     boolean play(int kind, int variant) {
         if (kind < 0 || kind >= tracks.length || variant < 0 || variant >= tracks[kind].length) return false;
         AudioTrack track = tracks[kind][variant];
-        if (track == null) return false;
+        if (track == null) {
+            track = tracks[kind][variant] = make(samples[kind][variant]);
+            if (track == null) return false;
+        }
         try {
             track.pause();
             track.reloadStaticData();
             track.play();
-            return true;
         } catch (IllegalStateException e) {
-            Log.w(PossumService.TAG, "can't play a scream", e);
+            failed("can't play a scream", e);
+            track.removeOnRoutingChangedListener(routed);
+            track.release();
+            tracks[kind][variant] = null;
             return false;
         }
+        if (failing) {
+            failing = false;
+            Log.i(PossumService.TAG, "the screams play again");
+        }
+        return true;
+    }
+
+    private void failed(String what, RuntimeException e) {
+        if (failing) return;
+        failing = true;
+        Log.w(PossumService.TAG, what + ", so it's silent; trying again at the next scream", e);
     }
 
     void hush() {

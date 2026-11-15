@@ -50,11 +50,11 @@ done
 
 # GNOME's Do Not Disturb switch turns its notification banners off. Its
 # settings live in a file of their own here (no D-Bus, no dconf).
-if ! command -v gsettings >/dev/null; then
-    echo "warning: no gsettings, so Do Not Disturb isn't checked"
+dnd=(env GSETTINGS_BACKEND=keyfile XDG_CONFIG_HOME="$PWD/dnd-settings" XDG_CURRENT_DESKTOP=ubuntu:GNOME)
+if ! "${dnd[@]}" gsettings range org.gnome.desktop.notifications show-banners >/dev/null 2>&1; then
+    echo "warning: no gsettings or GNOME's settings schemas, so Do Not Disturb isn't checked"
     exit 0
 fi
-dnd=(env GSETTINGS_BACKEND=keyfile XDG_CONFIG_HOME="$PWD/dnd-settings" XDG_CURRENT_DESKTOP=ubuntu:GNOME)
 "${dnd[@]}" gsettings set org.gnome.desktop.notifications show-banners false
 "${dnd[@]}" "$possum" --verbose --volume 0 --start 0.6 > dnd.log 2>&1 &
 pid=$!
