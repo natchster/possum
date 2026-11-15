@@ -79,13 +79,13 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates curl git gcc libc6-dev \
-            xvfb x11-xserver-utils imagemagick
+            xvfb x11-xserver-utils imagemagick libglib2.0-bin gsettings-desktop-schemas
       - name: Install packages (Fedora)
         if: matrix.family == 'fedora'
         run: |
           dnf install -y --skip-unavailable \
             ca-certificates curl git gcc glibc-devel \
-            xorg-x11-server-Xvfb xsetroot ImageMagick
+            xorg-x11-server-Xvfb xsetroot ImageMagick glib2 gsettings-desktop-schemas
       # rustup alone: the first cargo command installs the Rust (and Clippy)
       # that rust-toolchain.toml names.
       - name: Install rustup

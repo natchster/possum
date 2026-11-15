@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Runs Possum on a virtual X screen, in both modes, and takes screenshots
-# (scream-a.png, scream-b.png, silent-a.png, silent-b.png) and logs.
+# (scream-a.png, scream-b.png, silent-a.png, silent-b.png) and logs. Then
+# once more with GNOME's Do Not Disturb on (dnd-a.png, dnd.log), where it
+# must scream silently.
 #
 #   linux-screenshots.sh <possum binary>
 #
-# Needs Xvfb, xsetroot and ImageMagick.
+# Needs Xvfb, xsetroot and ImageMagick; gsettings and GNOME's schemas for
+# the last run.
 set -euo pipefail
 possum=${1:?usage: linux-screenshots.sh <possum binary>}
 background='#5b8bd6'
@@ -44,3 +47,21 @@ for run in "scream:--start 0.02" "silent:--silent --start 0.3"; do
         fi
     done
 done
+
+# GNOME's Do Not Disturb switch turns its notification banners off. Its
+# settings live in a file of their own here (no D-Bus, no dconf).
+if ! command -v gsettings >/dev/null; then
+    echo "warning: no gsettings, so Do Not Disturb isn't checked"
+    exit 0
+fi
+dnd=(env GSETTINGS_BACKEND=keyfile XDG_CONFIG_HOME="$PWD/dnd-settings" XDG_CURRENT_DESKTOP=ubuntu:GNOME)
+"${dnd[@]}" gsettings set org.gnome.desktop.notifications show-banners false
+"${dnd[@]}" "$possum" --verbose --volume 0 --start 0.6 > dnd.log 2>&1 &
+pid=$!
+sleep 4; shot dnd-a
+kill "$pid"; wait "$pid" || true
+cat dnd.log
+if ! grep -q "because Do Not Disturb is on" dnd.log; then
+    echo "error: it didn't scream silently in Do Not Disturb" >&2
+    exit 1
+fi
