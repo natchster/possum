@@ -708,7 +708,7 @@ back to what you picked.
 | | When | How Possum tells (once a second, and right before every scream) |
 |---|---|---|
 | **Android** | Silent or vibrate mode, Do Not Disturb, a call | `AudioManager`'s ringer mode and audio mode (calls), and `NotificationManager`'s interruption filter, also as they change |
-| **Windows** | Do Not Disturb (Focus assist on Windows 10), presentation mode | The active "quiet hours" profile, as Windows' own shell reads it (the Windows Notification Facility, through `NtQueryWnfStateData`: undocumented, so where it's missing, as under Wine, Possum can't tell), and `SHQueryUserNotificationState` |
+| **Windows** | Do Not Disturb (Focus assist on Windows 10), including when Windows turns it on by itself (for the first hour after it's set up or updated, say), and presentation mode | The active "quiet hours" profile, as Windows' own shell reads it (the Windows Notification Facility, through `NtQueryWnfStateData`: undocumented, so where it's missing, as under Wine, Possum can't tell), and `SHQueryUserNotificationState`. `--verbose` shows both as Windows reports them |
 | **Linux** | Do Not Disturb in GNOME (and Ubuntu's), KDE Plasma, Cinnamon, MATE and Xfce | GNOME's `show-banners`, Cinnamon's `display-notifications` and MATE's `do-not-disturb` settings, Xfce's `/do-not-disturb` (`xfconf-query`), and otherwise the notification server's `Inhibited` property (KDE Plasma) |
 | **macOS** | Can't tell | macOS only tells apps that Apple gives a special entitlement whether a Focus is on, and keeps that state in files only apps with Full Disk Access may read. Pick **Scream silently** yourself while you need quiet |
 
