@@ -87,6 +87,13 @@ public final class MainActivity extends Activity {
             text = "Possum needs your permission to appear on top of other apps.";
         } else if (running) {
             text = "Possum is running " + PossumService.status + ".";
+            String quiet = PossumService.quietMode(this, PossumService.hushNow);
+            if (quiet != null) {
+                text += "\nIt screams silently while " + quiet + ".";
+            } else if (PossumService.mediaOff) {
+                text += "\nThe media volume is off, so you won't hear it scream.";
+            }
+            if (Voices.route != null) text += "\nIts screams play through " + Voices.route + ".";
         } else {
             text = "Possum isn't running.";
         }
@@ -95,8 +102,9 @@ public final class MainActivity extends Activity {
         allow.setVisibility(allowed ? View.GONE : View.VISIBLE);
         startStop.setEnabled(allowed);
         startStop.setText(running ? "Stop Possum" : "Start Possum");
-        silent.setChecked(getSharedPreferences(PossumService.PREFS, MODE_PRIVATE)
-                .getBoolean(PossumService.PREF_SILENT, false));
+        // While the phone asks for quiet, it screams silently whatever was picked.
+        silent.setChecked(PossumService.hushNow != Native.HUSH_NONE
+                || getSharedPreferences(PossumService.PREFS, MODE_PRIVATE).getBoolean(PossumService.PREF_SILENT, false));
     }
 
     // -----------------------------------------------------------------------
@@ -152,14 +160,19 @@ public final class MainActivity extends Activity {
             if (PossumService.isRunning()) {
                 startService(new Intent(this, PossumService.class).setAction(PossumService.SET_SILENT)
                         .putExtra(PossumService.EXTRA_SILENT, on));
+                if (!on && PossumService.hushNow != Native.HUSH_NONE) {
+                    PossumService.tellWhySilent(this);
+                    silent.setChecked(true);
+                }
             }
         });
         column.addView(silent);
 
         column.addView(text("Taps and clicks go straight through the possum: Android only allows that for "
                 + "windows that are slightly see-through, so it is.", 14, false));
-        column.addView(text("While the phone is on silent or vibrate, in Do Not Disturb, or on a call, it "
-                + "screams silently, in speech bubbles.", 14, false));
+        column.addView(text("While the phone is set to silent or vibrate or to Do Not Disturb, it screams "
+                + "silently, in speech bubbles: Possum respects you. Scream Now, in its notification, still "
+                + "screams out loud (but not on a call). Its screams play at the media volume.", 14, false));
         column.addView(text("Can't switch on “appear on top”? Android blocks it for apps installed from a "
                 + "file. Open App info, tap ⋮, choose “Allow restricted settings”, then try again.", 14, false));
         column.addView(text("If Possum stops by itself after a while, set App info → Battery → Unrestricted.",

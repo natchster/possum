@@ -7,9 +7,9 @@
 //! on macOS); platforms with y-down screens flip them when drawing. Lengths
 //! are in the platform's screen units: points on macOS, pixels elsewhere.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use crate::quiet::{self, Quiet};
+use crate::quiet::{self, Hush, Quiet};
 use crate::scream::{self, Kind, Rng};
 use crate::sprite;
 use crate::track::Track;
@@ -19,6 +19,26 @@ use crate::track::Track;
 /// (you read it in a bubble, no sound).
 pub static SILENT: AtomicBool = AtomicBool::new(false);
 pub static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
+/// The controls above are process-wide: tests that touch them (here and in
+/// the Android library) take turns.
+#[cfg(test)]
+pub static TEST_CONTROLS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Whether the system asks for quiet right now (`Hush::code`), for the menu:
+/// then it screams silently whatever `SILENT` says.
+static HUSH: AtomicU8 = AtomicU8::new(0);
+
+/// Why the system asks for quiet right now, if it does (see `quiet::Hush`).
+pub fn hush() -> Option<Hush> {
+    Hush::from_code(HUSH.load(Ordering::Relaxed))
+}
+
+/// Whether it screams silently right now, picked or not: what the menu
+/// shows as chosen.
+#[cfg_attr(all(target_os = "macos", not(test)), expect(dead_code))]
+pub fn silent_now() -> bool {
+    SILENT.load(Ordering::Relaxed) || hush().is_some()
+}
 /// Set by the Linux tray's "Quit" (macOS and Windows quit through their own
 /// event loops).
 #[cfg_attr(not(target_os = "linux"), expect(dead_code))]
@@ -139,6 +159,10 @@ pub struct Brain {
     was_silent: bool,
     quiet: Quiet,
     was_quiet: Option<quiet::Reason>,
+    was_hush: Option<Hush>,
+    /// This scream is out loud although the system asks for quiet: "Scream
+    /// Now" was picked.
+    heard_anyway: bool,
     /// The possum alternates: "AAAA", hiss, "AAAA", hiss...
     next_kind: Kind,
     kind: Kind,
@@ -181,6 +205,8 @@ impl Brain {
             was_silent: SILENT.load(Ordering::Relaxed),
             quiet: Quiet::default(),
             was_quiet: None,
+            was_hush: None,
+            heard_anyway: false,
             // ...and opens with an "AAAA".
             next_kind: Kind::Aaaa,
             kind: Kind::Aaaa,
@@ -259,16 +285,30 @@ impl Brain {
             self.was_quiet = quiet;
         }
 
-        if SCREAM_NOW.swap(false, Ordering::Relaxed) {
+        let asked = SCREAM_NOW.swap(false, Ordering::Relaxed);
+        if asked {
             self.next_scream = now;
         }
         if now >= self.next_scream && !self.holding {
-            self.start_scream(now, host);
+            self.start_scream(now, host, asked);
         }
         let screaming = now < self.scream_until;
-        let silent = SILENT.load(Ordering::Relaxed);
+        self.heard_anyway &= screaming;
+
+        // Do Not Disturb and the like: scream silently, as if picked.
+        let hush = self.quiet.hush();
+        if hush != self.was_hush {
+            HUSH.store(Hush::code(hush), Ordering::Relaxed);
+            match hush {
+                Some(h) => self.log(format_args!("{}: screaming silently", h.describe())),
+                None => self.log(format_args!("the system no longer asks for quiet")),
+            }
+            self.was_hush = hush;
+        }
+        let silent = SILENT.load(Ordering::Relaxed) || (hush.is_some() && !self.heard_anyway);
         if silent && !self.was_silent {
-            // Switched to "Scream silently" mid-scream: hush at once.
+            // Switched to "Scream silently" (or Do Not Disturb came on)
+            // mid-scream: hush at once.
             host.hush();
         }
         self.was_silent = silent;
@@ -306,7 +346,9 @@ impl Brain {
         }
     }
 
-    fn start_scream(&mut self, now: f64, host: &mut dyn Host) {
+    /// `asked`: "Scream Now" was picked, which is heard even while the
+    /// system asks for quiet (except on a call).
+    fn start_scream(&mut self, now: f64, host: &mut dyn Host, asked: bool) {
         self.kind = self.next_kind;
         self.next_kind = match self.kind {
             Kind::Aaaa => Kind::Hiss,
@@ -323,14 +365,22 @@ impl Brain {
             Kind::Aaaa => "AAAA",
             Kind::Hiss => "hiss",
         };
+        let hush = self.quiet.hush();
+        self.heard_anyway = false;
         if let Some(reason) = self.quiet.reason() {
             self.log(format_args!("{what}: no sound, because {}", reason.describe()));
         } else if SILENT.load(Ordering::Relaxed) {
             self.log(format_args!("{what}: silently, in a speech bubble"));
+        } else if let Some(h) = hush.filter(|h| !(asked && h.lets_scream_now_through())) {
+            self.log(format_args!("{what}: silently, in a speech bubble, because {}", h.describe()));
         } else if !host.has_audio() {
             self.log(format_args!("{what}: no sound, because there's no audio player"));
         } else if host.play(self.kind, variant) {
-            self.log(format_args!("{what}: out loud"));
+            self.heard_anyway = hush.is_some();
+            match hush {
+                Some(h) => self.log(format_args!("{what}: out loud, for Scream Now, although {}", h.describe())),
+                None => self.log(format_args!("{what}: out loud")),
+            }
         } else {
             eprintln!("possum: could not play the scream (no audio output?)");
         }
@@ -375,11 +425,6 @@ fn make_track(width: f64, height: f64, scale: f64) -> Track {
 mod tests {
     use super::*;
     use crate::quiet::Probe;
-    use std::sync::Mutex;
-
-    /// The brain's controls are process-wide; tests that touch them take
-    /// turns.
-    static CONTROLS: Mutex<()> = Mutex::new(());
 
     #[derive(Default)]
     struct FakeHost {
@@ -422,9 +467,10 @@ mod tests {
     }
 
     fn reset_controls() -> std::sync::MutexGuard<'static, ()> {
-        let guard = CONTROLS.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = TEST_CONTROLS.lock().unwrap_or_else(|e| e.into_inner());
         SILENT.store(false, Ordering::Relaxed);
         SCREAM_NOW.store(false, Ordering::Relaxed);
+        HUSH.store(0, Ordering::Relaxed);
         guard
     }
 
@@ -529,6 +575,74 @@ mod tests {
         b.tick(0.6, &mut host);
         assert_eq!(host.played.len(), 2);
         assert_eq!(host.played[1].0, Kind::Hiss);
+    }
+
+    fn hushed(h: Hush) -> FakeHost {
+        FakeHost { probe: Probe { hush: Some(h), ..Probe::default() }, ..Default::default() }
+    }
+
+    #[test]
+    fn do_not_disturb_makes_it_scream_silently_and_the_menu_says_so() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), hushed(Hush::DoNotDisturb));
+        let scenes = run(&mut b, &mut host, 0.0, 10.0);
+        assert!(host.played.is_empty(), "played {:?} in Do Not Disturb", host.played);
+        assert!(scenes.iter().any(|s| s.bubble.is_some()), "a silent scream shows a bubble");
+        assert_eq!(hush(), Some(Hush::DoNotDisturb));
+        assert!(silent_now() && !SILENT.load(Ordering::Relaxed), "the menu shows silent; the choice stays");
+        // Off again: out loud, as picked.
+        host.probe.hush = None;
+        run(&mut b, &mut host, 10.0, 20.0);
+        assert!(!host.played.is_empty());
+        assert!(hush().is_none() && !silent_now());
+    }
+
+    #[test]
+    fn do_not_disturb_coming_on_mid_scream_cuts_it_off() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost::default());
+        run(&mut b, &mut host, 0.0, 0.5); // the first "AAAA" is playing
+        assert_eq!(host.played.len(), 1);
+        let hushes = host.hushes;
+        host.probe.hush = Some(Hush::PhoneVibrate);
+        // Noticed at the next probe, within a second.
+        let scenes = run(&mut b, &mut host, 0.5, 1.2);
+        assert!(host.hushes > hushes, "the scream should have been cut off");
+        assert!(scenes.last().unwrap().bubble.is_some(), "and the rest of it is a bubble");
+    }
+
+    #[test]
+    fn scream_now_is_heard_in_do_not_disturb_but_not_on_a_call() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), hushed(Hush::PhoneSilent));
+        run(&mut b, &mut host, 0.0, 0.5);
+        assert!(host.played.is_empty());
+        SCREAM_NOW.store(true, Ordering::Relaxed);
+        let scenes = run(&mut b, &mut host, 0.5, 1.0);
+        assert_eq!(host.played.len(), 1, "Scream Now is heard");
+        assert!(scenes.iter().all(|s| s.bubble.is_none()), "and needs no bubble");
+        // The screams after it are silent again.
+        run(&mut b, &mut host, 1.0, 12.0);
+        assert_eq!(host.played.len(), 1);
+
+        let (mut b, mut host) = (brain(), hushed(Hush::Call));
+        run(&mut b, &mut host, 0.0, 0.5);
+        SCREAM_NOW.store(true, Ordering::Relaxed);
+        let scenes = run(&mut b, &mut host, 0.5, 1.0);
+        assert!(host.played.is_empty(), "not during a call");
+        assert!(scenes.iter().any(|s| s.bubble.is_some()));
+    }
+
+    #[test]
+    fn picking_scream_silently_makes_scream_now_a_bubble_too() {
+        let _g = reset_controls();
+        SILENT.store(true, Ordering::Relaxed);
+        let (mut b, mut host) = (brain(), hushed(Hush::DoNotDisturb));
+        run(&mut b, &mut host, 0.0, 0.5);
+        SCREAM_NOW.store(true, Ordering::Relaxed);
+        run(&mut b, &mut host, 0.5, 1.0);
+        assert!(host.played.is_empty(), "picked Scream silently: Scream Now is a bubble");
+        SILENT.store(false, Ordering::Relaxed);
     }
 
     #[test]

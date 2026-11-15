@@ -42,23 +42,25 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
-    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, QUNS_PRESENTATION_MODE, SHQueryUserNotificationState, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, ChangeWindowMessageFilterEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
     DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyIcon, DestroyMenu, DispatchMessageW, EndMenu, GetCursorPos,
-    GetMessageW, HICON, HWND_TOPMOST, ICONINFO, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW,
-    PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostMessageW,
-    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SPI_GETSCREENSAVERRUNNING, SW_HIDE, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, ULW_ALPHA,
-    UpdateLayeredWindow, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_NULL, WM_POWERBROADCAST,
-    WM_RBUTTONUP, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT,
-    WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
+    GetMessageW, HICON, HWND_TOPMOST, ICONINFO, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MF_CHECKED,
+    MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MSGFLT_ALLOW, MessageBoxW, PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND,
+    PBT_APMSUSPEND, PBT_POWERSETTINGCHANGE, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    SPI_GETSCREENSAVERRUNNING, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, SystemParametersInfoW, TPM_NONOTIFY, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WM_APP, WM_CONTEXTMENU,
+    WM_DISPLAYCHANGE, WM_LBUTTONUP, WM_NULL, WM_POWERBROADCAST, WM_RBUTTONUP, WM_TIMER, WM_WTSSESSION_CHANGE,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK,
+    WTS_SESSION_UNLOCK,
 };
 
 use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, Scene, Settings};
+use crate::quiet::Hush;
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
 use crate::{Options, quiet, screens, sprite};
@@ -160,6 +162,12 @@ pub fn run(opts: &Options) {
     if wine_on_mac() {
         brain.log(format_args!("keeping below the Mac's menu bar and above its Dock"));
     }
+    let dnd = match do_not_disturb() {
+        Some(true) => "on",
+        Some(false) => "off",
+        None => "can't tell on this Windows",
+    };
+    brain.log(format_args!("Do Not Disturb: {dnd}"));
 
     // SAFETY: standard window-class registration and window creation.
     let (main, possum, bubble) = unsafe {
@@ -275,6 +283,65 @@ fn primary_monitor() -> (screens::Rect, f64) {
             screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
         (rect, dpi_x.max(96) as f64 / 96.0)
     }
+}
+
+/// Whether Windows asks apps for quiet: Do Not Disturb (Focus assist before
+/// Windows 11), or presentation mode.
+fn system_hush() -> Option<Hush> {
+    if do_not_disturb() == Some(true) {
+        return Some(Hush::DoNotDisturb);
+    }
+    let mut state = 0;
+    // SAFETY: a plain query with a valid out-pointer.
+    let ok = unsafe { SHQueryUserNotificationState(&mut state) } >= 0;
+    (ok && state == QUNS_PRESENTATION_MODE).then_some(Hush::Presenting)
+}
+
+/// Whether Do Not Disturb is on. Windows has no documented way to ask, so
+/// this reads what its own shell reads: the active "quiet hours" profile in
+/// the Windows Notification Facility (WNF), through ntdll's
+/// `NtQueryWnfStateData`. 0 is off; anything else is a profile that holds
+/// notifications back (priority only, alarms only). None when this Windows
+/// (or Wine) doesn't have it.
+fn do_not_disturb() -> Option<bool> {
+    type Query = unsafe extern "system" fn(
+        state: *const u64,
+        type_id: *const c_void,
+        scope: *const c_void,
+        stamp: *mut u32,
+        buffer: *mut c_void,
+        size: *mut u32,
+    ) -> i32;
+    const QUIET_HOURS_PROFILE: u64 = 0x0D83_063E_A3BF_1C75; // WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED
+    static QUERY: OnceLock<Option<Query>> = OnceLock::new();
+    let query = (*QUERY.get_or_init(|| {
+        // SAFETY: ntdll.dll is loaded in every process, and its
+        // NtQueryWnfStateData has this signature.
+        unsafe {
+            let ntdll = GetModuleHandleW(wide("ntdll.dll").as_ptr());
+            let found = GetProcAddress(ntdll, c"NtQueryWnfStateData".as_ptr().cast())?;
+            Some(std::mem::transmute::<unsafe extern "system" fn() -> isize, Query>(found))
+        }
+    }))?;
+    let (mut stamp, mut profile, mut size) = (0u32, 0u32, size_of::<u32>() as u32);
+    // SAFETY: valid pointers; the buffer is `size` bytes long.
+    let status =
+        unsafe { query(&QUIET_HOURS_PROFILE, null(), null(), &mut stamp, (&raw mut profile).cast(), &mut size) };
+    // No data at all: never switched on since Windows started.
+    (status >= 0).then_some(size != 0 && profile != 0)
+}
+
+/// Says why "Scream" stays silent for now, in a message box on its own
+/// thread, so the possum keeps running meanwhile.
+fn tell_why_silent(hush: Hush) {
+    let (headline, rest) = hush.respect("computer");
+    trace(format_args!("menu: {headline}"));
+    std::thread::spawn(move || {
+        let (text, caption) = (wide(&format!("{headline}\n\n{rest}")), wide("Possum"));
+        let style = MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND;
+        // SAFETY: valid NUL-terminated strings that outlive the call.
+        unsafe { MessageBoxW(null_mut(), text.as_ptr(), caption.as_ptr(), style) };
+    });
 }
 
 /// Whether Possum runs under Wine on a Mac. There, macOS moves any window
@@ -552,7 +619,8 @@ fn icon_from(canvas: &sprite::Canvas, size: usize) -> HICON {
 
 /// The menu, at `at` (where the icon is), or at the pointer.
 fn show_menu(main: HWND, at: Option<POINT>) {
-    let silent = SILENT.load(Ordering::Relaxed);
+    // In Do Not Disturb it screams silently, whatever was picked.
+    let silent = brain::silent_now();
     // SAFETY: a standard popup menu, destroyed before returning. Nothing
     // here touches the app state, so timer ticks during the menu's modal
     // loop are fine.
@@ -586,7 +654,12 @@ fn show_menu(main: HWND, at: Option<POINT>) {
         PostMessageW(main, WM_NULL, 0, 0);
         DestroyMenu(menu);
         match choice as usize {
-            MENU_SCREAM => SILENT.store(false, Ordering::Relaxed),
+            MENU_SCREAM => {
+                SILENT.store(false, Ordering::Relaxed);
+                if let Some(hush) = brain::hush() {
+                    tell_why_silent(hush);
+                }
+            }
             MENU_SCREAM_SILENTLY => SILENT.store(true, Ordering::Relaxed),
             MENU_SCREAM_NOW => SCREAM_NOW.store(true, Ordering::Relaxed),
             MENU_QUIT => PostQuitMessage(0),
@@ -730,6 +803,7 @@ impl Host for Sounds {
                 // Display power and session switches come as messages.
                 display_asleep: None,
                 on_console: None,
+                hush: system_hush(),
             }
         }
     }

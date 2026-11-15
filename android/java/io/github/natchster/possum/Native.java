@@ -23,6 +23,13 @@ final class Native {
     /** The quiet bits for tick(): no sound while either is set. */
     static final int LOCKED = 1, DISPLAY_OFF = 2;
 
+    /**
+     * Why the phone asks for quiet, for tick() (quiet::Hush in the Rust
+     * code, which checks these numbers): it screams silently, in speech
+     * bubbles, and Scream Now is still heard, except on a call.
+     */
+    static final int HUSH_NONE = 0, HUSH_DND = 1, HUSH_SILENT = 3, HUSH_VIBRATE = 4, HUSH_CALL = 5;
+
     // layout(): where the paws are on the pictures, and the view sizes, in
     // sprite pixels.
     static final int FEET_X = 0, FEET_Y = 1, POSSUM_W = 2, POSSUM_H = 3, BUBBLE_MAX_W = 4, BUBBLE_MAX_H = 5;
@@ -39,7 +46,7 @@ final class Native {
     static native void resize(float width, float height);
 
     /** One frame; returns how many sound requests it wrote. */
-    static native int tick(double now, boolean silent, int quiet, float[] scene, int[] requests);
+    static native int tick(double now, boolean silent, int quiet, int hush, float[] scene, int[] requests);
 
     static native void screamNow();
 

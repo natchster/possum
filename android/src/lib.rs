@@ -174,6 +174,12 @@ pub const PLAY: i32 = 2 << 16;
 pub const LOCKED: i32 = 1;
 pub const DISPLAY_OFF: i32 = 2;
 
+/// The `hush` argument to `Core::tick`: why the phone asks for quiet
+/// (`quiet::Hush::code`; 0 for not at all).
+pub fn hush_code(hush: Option<quiet::Hush>) -> i32 {
+    quiet::Hush::code(hush) as i32
+}
+
 /// What a tick says to draw, as numbers for Java: the paws (y-up, from the
 /// bottom-left of the track) and heading; the possum picture; the bubble
 /// picture (-1 for none) and its place; whether to look at the displays
@@ -226,16 +232,25 @@ impl Core {
     }
 
     /// One frame: what to draw (see `SCENE_LEN`) and the sound requests, in
-    /// order. `silent` is "Scream silently" (picked in the menu, or forced
-    /// by the phone's own silent mode); `quiet` has the `LOCKED` and
-    /// `DISPLAY_OFF` bits.
-    pub fn tick(&mut self, pictures: &Pictures, now: f64, silent: bool, quiet: i32) -> ([f32; SCENE_LEN], Vec<i32>) {
+    /// order. `silent` is "Scream silently", as picked; `quiet` has the
+    /// `LOCKED` and `DISPLAY_OFF` bits; `hush` says why the phone asks for
+    /// quiet (silent or vibrate mode, Do Not Disturb, a call; see
+    /// `hush_code`), when it screams silently too, except for Scream Now.
+    pub fn tick(
+        &mut self,
+        pictures: &Pictures,
+        now: f64,
+        silent: bool,
+        quiet: i32,
+        hush: i32,
+    ) -> ([f32; SCENE_LEN], Vec<i32>) {
         brain::SILENT.store(silent, Ordering::Relaxed);
         let probe = quiet::Probe {
             screen_locked: Some(quiet & LOCKED != 0),
             display_asleep: Some(quiet & DISPLAY_OFF != 0),
             screensaver: None,
             on_console: None,
+            hush: u8::try_from(hush).ok().and_then(quiet::Hush::from_code),
         };
         let mut requests = Requests { probe, ops: Vec::new() };
         let scene = self.brain.tick(now, &mut requests);
@@ -322,14 +337,22 @@ mod tests {
         }
     }
 
+    /// Ticking sets the brain's process-wide controls: one test at a time.
+    fn controls() -> std::sync::MutexGuard<'static, ()> {
+        let guard = brain::TEST_CONTROLS.lock().unwrap_or_else(|e| e.into_inner());
+        brain::SCREAM_NOW.store(false, Ordering::Relaxed);
+        guard
+    }
+
     #[test]
     fn a_tick_asks_for_sounds_and_says_what_to_draw() {
+        let _g = controls();
         let (pictures, voices) = (Pictures::new(), Voices::new(7));
         let mut core = Core::new(&voices, 3.0, 260.0, 1920.0, 1080.0, 7);
         let mut played = Vec::new();
         let mut now = 0.0;
         while now < 1.0 {
-            let (scene, ops) = core.tick(&pictures, now, false, 0);
+            let (scene, ops) = core.tick(&pictures, now, false, 0, 0);
             played.extend(ops);
             assert!(scene[3] >= 0.0 && (scene[3] as usize) < pictures.count());
             assert_eq!(scene[4], -1.0, "no bubble when screaming out loud");
@@ -344,7 +367,7 @@ mod tests {
         let (mut bubble, mut sounds) = (false, 0);
         let mut now = 0.0;
         while now < 1.0 {
-            let (scene, ops) = core.tick(&pictures, now, true, 0);
+            let (scene, ops) = core.tick(&pictures, now, true, 0, 0);
             bubble |= scene[4] >= 0.0;
             sounds += ops.iter().filter(|&&op| op & PLAY != 0).count();
             now += 1.0 / 60.0;
@@ -353,9 +376,41 @@ mod tests {
         let mut core = Core::new(&voices, 3.0, 260.0, 1920.0, 1080.0, 7);
         let mut now = 0.0;
         while now < 1.0 {
-            let (scene, ops) = core.tick(&pictures, now, false, LOCKED);
+            let (scene, ops) = core.tick(&pictures, now, false, LOCKED, 0);
             assert!(scene[4] < 0.0 && ops.iter().all(|&op| op & PLAY == 0));
             now += 1.0 / 60.0;
         }
+    }
+
+    #[test]
+    fn hush_codes_are_native_java_s() {
+        use quiet::Hush;
+        // Native.java's HUSH_* numbers.
+        let java = [(Hush::DoNotDisturb, 1), (Hush::PhoneSilent, 3), (Hush::PhoneVibrate, 4), (Hush::Call, 5)];
+        for (hush, code) in java {
+            assert_eq!(hush_code(Some(hush)), code, "{hush:?}");
+        }
+        assert_eq!(hush_code(None), 0);
+    }
+
+    #[test]
+    fn on_vibrate_it_screams_in_bubbles_but_scream_now_is_heard() {
+        let _g = controls();
+        let (pictures, voices) = (Pictures::new(), Voices::new(7));
+        let vibrate = hush_code(Some(quiet::Hush::PhoneVibrate));
+        assert_ne!(vibrate, 0);
+        let mut core = Core::new(&voices, 3.0, 260.0, 1920.0, 1080.0, 7);
+        let (mut bubble, mut sounds) = (false, 0);
+        let mut now = 0.0;
+        while now < 2.0 {
+            let (scene, ops) = core.tick(&pictures, now, false, 0, vibrate);
+            bubble |= scene[4] >= 0.0;
+            sounds += ops.iter().filter(|&&op| op & PLAY != 0).count();
+            now += 1.0 / 60.0;
+        }
+        assert!(bubble && sounds == 0, "bubble {bubble}, {sounds} sounds");
+        brain::SCREAM_NOW.store(true, Ordering::Relaxed);
+        let (_, ops) = core.tick(&pictures, now, false, 0, vibrate);
+        assert!(ops.iter().any(|&op| op & PLAY != 0), "Scream Now is heard");
     }
 }

@@ -11,6 +11,11 @@
 //! * **Probes**: a direct reading of the real system state every second, as
 //!   a safety net in case a notification is missed or the app starts while
 //!   one of these is already true.
+//!
+//! Separately, it tracks when the system asks apps for quiet while you're
+//! still there to see the possum ([`Hush`]: Do Not Disturb, a phone on
+//! silent...). Then it screams silently, in speech bubbles. Only probes
+//! report that.
 
 /// Why the possum is keeping quiet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +36,73 @@ impl Reason {
             Reason::UserSwitchedAway => "another user is using the screen",
             Reason::SystemSleeping => "the computer is going to sleep",
         }
+    }
+}
+
+/// Why the possum screams silently, in speech bubbles, although "Scream" is
+/// picked: the system asks apps to keep quiet. "Scream Now" is still heard
+/// (it's asked for right then), except on a call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hush {
+    /// Do Not Disturb (Focus assist on older Windows).
+    DoNotDisturb,
+    /// Windows' presentation mode.
+    Presenting,
+    PhoneSilent,
+    PhoneVibrate,
+    Call,
+}
+
+impl Hush {
+    /// Every kind, in the order of their numbers (see `code`).
+    pub const ALL: [Hush; 5] =
+        [Hush::DoNotDisturb, Hush::Presenting, Hush::PhoneSilent, Hush::PhoneVibrate, Hush::Call];
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Hush::DoNotDisturb => "Do Not Disturb is on",
+            Hush::Presenting => "presentation mode is on",
+            Hush::PhoneSilent => "the phone is on silent",
+            Hush::PhoneVibrate => "the phone is on vibrate",
+            Hush::Call => "there's a call",
+        }
+    }
+
+    /// Whether "Scream Now" is still heard. Not on a call.
+    pub fn lets_scream_now_through(self) -> bool {
+        self != Hush::Call
+    }
+
+    /// What to say when "Scream" is picked meanwhile: a short headline (a
+    /// notification's title shows one line), and the rest. `device` is
+    /// "computer", "phone"... (macOS can't tell when to hush: see the
+    /// guide.)
+    #[cfg_attr(all(target_os = "macos", not(test)), expect(dead_code))]
+    pub fn respect(self, device: &str) -> (String, &'static str) {
+        let headline = match self {
+            Hush::DoNotDisturb => format!("Your {device} is set to Do Not Disturb"),
+            Hush::Presenting => format!("Your {device} is in presentation mode"),
+            Hush::PhoneSilent => format!("Your {device} is set to silent"),
+            Hush::PhoneVibrate => format!("Your {device} is set to vibrate"),
+            Hush::Call => "You're on a call".to_string(),
+        };
+        let rest = if self.lets_scream_now_through() {
+            "Possum respects you, so it screams silently, in speech bubbles, until that's off. \
+             Scream Now still screams out loud."
+        } else {
+            "Possum respects you, so it screams silently, in speech bubbles, until the call is over."
+        };
+        (headline, rest)
+    }
+
+    /// A small number for it (0 is none), to keep in an atomic or pass to
+    /// Java.
+    pub fn code(hush: Option<Hush>) -> u8 {
+        hush.map_or(0, |h| Self::ALL.iter().position(|&a| a == h).map_or(0, |i| i as u8 + 1))
+    }
+
+    pub fn from_code(code: u8) -> Option<Hush> {
+        Self::ALL.get((code as usize).checked_sub(1)?).copied()
     }
 }
 
@@ -102,6 +174,9 @@ pub struct Probe {
     pub display_asleep: Option<bool>,
     /// False while another user's session owns the screen.
     pub on_console: Option<bool>,
+    /// The system asks for quiet. `None` also when this platform can't
+    /// tell.
+    pub hush: Option<Hush>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -111,6 +186,7 @@ pub struct Quiet {
     display_asleep: bool,
     switched_away: bool,
     sleeping: bool,
+    hush: Option<Hush>,
 }
 
 impl Quiet {
@@ -147,6 +223,13 @@ impl Quiet {
         if let Some(on_console) = probe.on_console {
             self.switched_away = !on_console;
         }
+        // Only probes can tell, so the latest one is right.
+        self.hush = probe.hush;
+    }
+
+    /// Why it should scream silently, if the system asks for quiet.
+    pub fn hush(&self) -> Option<Hush> {
+        self.hush
     }
 
     /// The reason to keep quiet, if there is one.
@@ -177,6 +260,7 @@ mod tests {
         screensaver: Some(false),
         display_asleep: Some(false),
         on_console: Some(true),
+        hush: None,
     };
 
     #[test]
@@ -274,6 +358,34 @@ mod tests {
         // An empty probe changes nothing at all.
         q.update(Probe::default());
         assert_eq!(q.reason(), Some(Reason::DisplayAsleep));
+    }
+
+    #[test]
+    fn a_hush_is_not_a_reason_to_keep_quiet_and_goes_with_the_next_probe() {
+        let mut q = Quiet::default();
+        q.update(Probe { hush: Some(Hush::DoNotDisturb), ..AWAKE });
+        // It still screams (silently), so it isn't quiet.
+        assert_eq!((q.reason(), q.hush()), (None, Some(Hush::DoNotDisturb)));
+        q.apply(Event::ScreenLocked);
+        assert_eq!((q.reason(), q.hush()), (Some(Reason::ScreenLocked), Some(Hush::DoNotDisturb)));
+        q.update(Probe { screen_locked: Some(false), ..AWAKE });
+        assert_eq!((q.reason(), q.hush()), (None, None));
+    }
+
+    #[test]
+    fn hush_codes_go_both_ways_and_messages_say_respect() {
+        assert_eq!(Hush::code(None), 0);
+        assert_eq!(Hush::from_code(0), None);
+        assert_eq!(Hush::from_code(Hush::ALL.len() as u8 + 1), None);
+        for h in Hush::ALL {
+            assert_eq!(Hush::from_code(Hush::code(Some(h))), Some(h));
+            let (headline, rest) = h.respect("phone");
+            // A notification shows its title on one line.
+            assert!(headline.len() <= 40, "{headline}");
+            assert!(rest.starts_with("Possum respects you, so it screams silently"), "{rest}");
+            assert_eq!(rest.contains("Scream Now"), h.lets_scream_now_through(), "{rest}");
+        }
+        assert_eq!(Hush::PhoneVibrate.respect("tablet").0, "Your tablet is set to vibrate");
     }
 
     #[test]

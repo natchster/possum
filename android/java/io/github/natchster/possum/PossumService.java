@@ -25,6 +25,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.Choreographer;
 import android.view.Display;
+import android.widget.Toast;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -41,6 +42,11 @@ import java.util.Set;
  *
  * The notification is the menu, as on the desktop: Scream / Scream
  * silently, Scream Now, Quit Possum.
+ *
+ * While the phone asks for quiet (silent or vibrate mode, Do Not Disturb, a
+ * call), the possum screams silently, in speech bubbles, whatever was
+ * picked; Scream Now is still heard, except on a call. Picking Scream
+ * meanwhile says so: the phone is set to quiet, and Possum respects you.
  */
 public final class PossumService extends Service
         implements Choreographer.FrameCallback, Stage.Listener, DisplayManager.DisplayListener {
@@ -70,6 +76,10 @@ public final class PossumService extends Service
     static volatile String status;
     /** For the app screen: why it isn't running, or what went wrong. */
     static volatile String problem;
+    /** For the app screen: why the phone asks for quiet (Native.HUSH_*). */
+    static volatile int hushNow;
+    /** For the app screen: the media volume is all the way down. */
+    static volatile boolean mediaOff;
 
     private Handler handler;
     private Choreographer choreographer;
@@ -92,7 +102,8 @@ public final class PossumService extends Service
     private boolean running;
     private long startNanos, lastFrameNanos;
     private int quiet;
-    private boolean userSilent, phoneSilent;
+    private int hush = Native.HUSH_NONE;
+    private boolean userSilent;
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -139,7 +150,15 @@ public final class PossumService extends Service
                 stopSelf();
                 break;
             case TOGGLE_SILENT:
-                setSilent(!userSilent);
+                probe();
+                // While the phone asks for quiet, the menu offers Scream:
+                // it's remembered for later, and Possum says why not now.
+                if (hush != Native.HUSH_NONE) {
+                    setSilent(false);
+                    tellWhySilent(stage != null ? createDisplayContext(stage.display) : this);
+                } else {
+                    setSilent(!userSilent);
+                }
                 break;
             case SET_SILENT:
                 setSilent(intent.getBooleanExtra(EXTRA_SILENT, userSilent));
@@ -205,6 +224,8 @@ public final class PossumService extends Service
         voices.release();
         Native.stop();
         status = null;
+        hushNow = Native.HUSH_NONE;
+        mediaOff = false;
         super.onDestroy();
     }
 
@@ -341,7 +362,7 @@ public final class PossumService extends Service
         lastFrameNanos = nanos;
         if (stage == null) return;
         double now = (nanos - startNanos) / 1e9;
-        int n = Native.tick(now, userSilent || phoneSilent, quiet, scene, requests);
+        int n = Native.tick(now, userSilent, quiet, hush, scene, requests);
         for (int i = 0; i < n; i++) {
             int r = requests[i];
             if (r == Native.HUSH) {
@@ -360,9 +381,9 @@ public final class PossumService extends Service
 
     /**
      * Reads the lock and display state (the brain keeps quiet while either
-     * is set) and whether the phone wants silence: silent or vibrate mode,
-     * Do Not Disturb, or a call. Then the possum screams silently, in
-     * speech bubbles, whatever the menu says.
+     * is set), whether the phone asks for quiet (a call, Do Not Disturb,
+     * silent or vibrate mode: then the possum screams silently), and
+     * whether the media volume, which its screams play at, is down.
      */
     private void probe() {
         if (stage == null) return;
@@ -373,14 +394,51 @@ public final class PossumService extends Service
         if (stage.display.getDisplayId() == Display.DEFAULT_DISPLAY && !power.isInteractive()) off = true;
         if (off) q |= Native.DISPLAY_OFF;
         quiet = q;
-        boolean silent = audio.getRingerMode() != AudioManager.RINGER_MODE_NORMAL
-                || notifications.getCurrentInterruptionFilter() > NotificationManager.INTERRUPTION_FILTER_ALL
-                || audio.getMode() != AudioManager.MODE_NORMAL;
-        if (silent != phoneSilent) {
-            phoneSilent = silent;
-            Log.i(TAG, silent ? "the phone wants quiet: screaming silently" : "the phone may make sounds again");
+
+        int h = Native.HUSH_NONE;
+        int ringer = audio.getRingerMode();
+        if (audio.getMode() != AudioManager.MODE_NORMAL) {
+            h = Native.HUSH_CALL;
+        } else if (notifications.getCurrentInterruptionFilter() > NotificationManager.INTERRUPTION_FILTER_ALL) {
+            h = Native.HUSH_DND;
+        } else if (ringer == AudioManager.RINGER_MODE_SILENT) {
+            h = Native.HUSH_SILENT;
+        } else if (ringer == AudioManager.RINGER_MODE_VIBRATE) {
+            h = Native.HUSH_VIBRATE;
+        }
+        boolean mute = audio.isStreamMute(AudioManager.STREAM_MUSIC)
+                || audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0;
+        if (mute != mediaOff) {
+            Log.i(TAG, mute ? "the media volume is all the way down: its screams can't be heard"
+                    : "the media volume is up");
+        }
+        if (h != hush || mute != mediaOff) {
+            hush = h;
+            hushNow = h;
+            mediaOff = mute;
             goForeground();
         }
+    }
+
+    /** "your phone is set to vibrate"..., or null while it doesn't ask for quiet. */
+    static String quietMode(Context context, int hush) {
+        String device = context.getResources().getConfiguration().smallestScreenWidthDp >= 600 ? "tablet" : "phone";
+        switch (hush) {
+            case Native.HUSH_DND: return "your " + device + " is set to Do Not Disturb";
+            case Native.HUSH_SILENT: return "your " + device + " is set to silent";
+            case Native.HUSH_VIBRATE: return "your " + device + " is set to vibrate";
+            case Native.HUSH_CALL: return "you're on a call";
+            default: return null;
+        }
+    }
+
+    /** Says why Scream stays silent for now, in a toast on that context's display. */
+    static void tellWhySilent(Context context) {
+        String mode = quietMode(context, hushNow);
+        if (mode == null) return;
+        String text = Character.toUpperCase(mode.charAt(0)) + mode.substring(1) + ", and Possum respects you.";
+        Log.i(TAG, "told the user: " + text);
+        Toast.makeText(context, text, Toast.LENGTH_LONG).show();
     }
 
     private final BroadcastReceiver systemEvents = new BroadcastReceiver() {
@@ -407,22 +465,28 @@ public final class PossumService extends Service
     }
 
     private void goForeground() {
-        String mode = userSilent ? "screaming silently"
-                : phoneSilent ? "screaming silently while the phone is quiet" : "screaming out loud";
+        String quietMode = quietMode(this, hush);
+        String mode = quietMode != null ? "screaming silently while " + quietMode
+                : userSilent ? "screaming silently"
+                : mediaOff ? "screaming out loud, but the media volume is off" : "screaming out loud";
         String where = status == null ? "Starting…"
                 : Character.toUpperCase(status.charAt(0)) + status.substring(1) + ", " + mode + ".";
+        String more = quietMode == null || userSilent ? where
+                : where + (hush == Native.HUSH_CALL ? "" : " Scream Now still screams out loud.");
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(Icon.createWithBitmap(notificationIcon))
                 .setContentTitle("Possum is running!")
                 .setContentText(where)
+                .setStyle(new Notification.BigTextStyle().bigText(more))
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setShowWhen(false)
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
-                .addAction(action(userSilent ? "Scream" : "Scream silently", TOGGLE_SILENT, 1))
+                .addAction(action(userSilent || hush != Native.HUSH_NONE ? "Scream" : "Scream silently",
+                        TOGGLE_SILENT, 1))
                 .addAction(action("Scream Now", SCREAM_NOW, 2))
                 .addAction(action("Quit Possum", QUIT, 3))
                 .build();

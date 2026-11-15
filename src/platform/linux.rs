@@ -17,13 +17,15 @@
 //!   (PulseAudio) or `aplay` (ALSA).
 //! * Quiet times: a background thread asks systemd-logind whether the
 //!   session is locked or inactive, the desktop whether its screensaver is
-//!   active (over D-Bus), and X11's DPMS whether the display is off.
+//!   active (over D-Bus), and X11's DPMS whether the display is off. It
+//!   also asks the desktop whether Do Not Disturb is on: then the possum
+//!   screams silently.
 //! * The menu is a StatusNotifierItem tray icon (KDE, most desktops; GNOME
 //!   with the AppIndicator extension, which Ubuntu ships enabled).
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -39,6 +41,7 @@ use x11rb::protocol::xproto::{
 use x11rb::rust_connection::RustConnection;
 
 use crate::brain::{self, Brain, Host, QUIT, SCREAM_NOW, SILENT, Scene, Settings};
+use crate::quiet::Hush;
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
 use crate::{Options, quiet, screens, sprite};
@@ -78,7 +81,7 @@ fn try_run(opts: &Options) -> Result<()> {
         eprintln!("possum: no audio player found (pw-play, paplay or aplay), so it screams silently");
     }
 
-    let _tray = start_tray();
+    let tray = start_tray();
     let art = Art::new();
     let reach = render::reach(&art, opts.scale);
     let mut app = App { x, art, sounds, brain, screen, scale: opts.scale, reach, possum_key: None, bubble_key: None };
@@ -86,8 +89,17 @@ fn try_run(opts: &Options) -> Result<()> {
     let clock = Instant::now();
     let frame = Duration::from_secs_f64(1.0 / 60.0);
     let mut next = Instant::now();
+    let mut menu_silent = brain::silent_now();
     while !QUIT.load(Ordering::Relaxed) {
         app.tick(clock.elapsed().as_secs_f64())?;
+        // The menu shows whether it screams silently, which Do Not Disturb
+        // changes too.
+        if brain::silent_now() != menu_silent {
+            menu_silent = !menu_silent;
+            if let Some(tray) = &tray {
+                tray.update(|_| {});
+            }
+        }
         next += frame;
         let now = Instant::now();
         if next > now {
@@ -368,9 +380,11 @@ fn start_probe_thread(latest: Arc<Mutex<quiet::Probe>>) {
     std::thread::spawn(move || {
         // DPMS needs its own connection on this thread.
         let x = x11rb::connect(None).ok();
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
         loop {
             let mut probe = probe_session();
             probe.screensaver = screensaver_active();
+            probe.hush = (do_not_disturb(&desktop) == Some(true)).then_some(Hush::DoNotDisturb);
             if let Some((conn, _)) = &x {
                 probe.display_asleep = conn
                     .dpms_info()
@@ -452,13 +466,91 @@ fn screensaver_active() -> Option<bool> {
     })
 }
 
-/// Parses a gdbus reply like `(true,)`.
+/// Parses a gdbus reply like `(true,)`, or `(<true>,)` for a property.
 fn parse_gdbus_bool(text: &str) -> Option<bool> {
-    match text.trim().trim_prefix('(').trim_suffix(')').trim_suffix(',') {
+    let value = text.trim().trim_prefix('(').trim_suffix(')').trim_suffix(',');
+    parse_setting(value.trim_prefix('<').trim_suffix('>'))
+}
+
+/// Parses a boolean setting, as gsettings and xfconf-query print them.
+fn parse_setting(text: &str) -> Option<bool> {
+    match text.trim() {
         "true" => Some(true),
         "false" => Some(false),
         _ => None,
     }
+}
+
+/// Whether the desktop's Do Not Disturb is on. GNOME (and Ubuntu's),
+/// Cinnamon, MATE and Xfce keep it in their settings; KDE Plasma (and other
+/// notification servers) say so through the freedesktop notification
+/// server's `Inhibited` property. None when it can't tell.
+fn do_not_disturb(desktop: &str) -> Option<bool> {
+    let read = |program: &str, args: &[&str]| -> Option<bool> {
+        let out = Command::new(program).args(args).stderr(Stdio::null()).output().ok()?;
+        out.status.success().then(|| parse_setting(&String::from_utf8_lossy(&out.stdout)))?
+    };
+    let on = |names: &[&str]| desktop.split(':').any(|d| names.iter().any(|n| d.eq_ignore_ascii_case(n)));
+    let from_settings = if on(&["GNOME", "Unity"]) {
+        // Its Do Not Disturb switch turns the banners off.
+        read("gsettings", &["get", "org.gnome.desktop.notifications", "show-banners"]).map(|banners| !banners)
+    } else if on(&["X-Cinnamon", "Cinnamon"]) {
+        read("gsettings", &["get", "org.cinnamon.desktop.notifications", "display-notifications"]).map(|shown| !shown)
+    } else if on(&["MATE"]) {
+        read("gsettings", &["get", "org.mate.NotificationDaemon", "do-not-disturb"])
+    } else if on(&["XFCE"]) {
+        read("xfconf-query", &["-c", "xfce4-notifyd", "-p", "/do-not-disturb"])
+    } else {
+        None
+    };
+    from_settings.or_else(notifications_inhibited)
+}
+
+/// The freedesktop notification server's `Inhibited` property, if one is
+/// running. (Asking a server that isn't running would start one.)
+fn notifications_inhibited() -> Option<bool> {
+    let gdbus = |dest: &str, path: &str, method: &str, args: &[&str]| -> Option<bool> {
+        let out = Command::new("gdbus")
+            .args(["call", "--session", "--dest", dest, "--object-path", path, "--method", method])
+            .args(args)
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        out.status.success().then(|| parse_gdbus_bool(&String::from_utf8_lossy(&out.stdout)))?
+    };
+    let server = "org.freedesktop.Notifications";
+    let bus = ("org.freedesktop.DBus", "/org/freedesktop/DBus");
+    gdbus(bus.0, bus.1, "org.freedesktop.DBus.NameHasOwner", &[server])?.then_some(())?;
+    gdbus(server, "/org/freedesktop/Notifications", "org.freedesktop.DBus.Properties.Get", &[server, "Inhibited"])
+}
+
+/// Says why "Scream" stays silent for now: a notification marked critical,
+/// the kind desktops still show in Do Not Disturb (it's the answer to a
+/// click in the menu). Critical ones stay until closed, so a new one
+/// replaces the last, and none is kept in the notification list.
+fn tell_why_silent(hush: Hush) {
+    static LAST: AtomicU32 = AtomicU32::new(0);
+    let (headline, rest) = hush.respect("computer");
+    std::thread::spawn(move || {
+        let replaces = LAST.load(Ordering::Relaxed).to_string();
+        let hints = "{'urgency': <byte 2>, 'transient': <true>}";
+        let out = Command::new("gdbus")
+            .args(["call", "--session", "--dest", "org.freedesktop.Notifications"])
+            .args(["--object-path", "/org/freedesktop/Notifications"])
+            .args(["--method", "org.freedesktop.Notifications.Notify"])
+            .args(["Possum", &replaces, "", &headline, rest, "[]", hints, "10000"])
+            .stderr(Stdio::null())
+            .output();
+        match out.ok().filter(|o| o.status.success()) {
+            Some(o) => LAST.store(parse_gdbus_u32(&String::from_utf8_lossy(&o.stdout)).unwrap_or(0), Ordering::Relaxed),
+            None => eprintln!("possum: {headline}. {rest}"),
+        }
+    });
+}
+
+/// Parses a gdbus reply like `(uint32 7,)`.
+fn parse_gdbus_u32(text: &str) -> Option<u32> {
+    text.trim().trim_prefix('(').trim_suffix(')').trim_suffix(',').trim_prefix("uint32 ").parse().ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -489,8 +581,14 @@ impl ksni::Tray for Tray {
             StandardItem { enabled: false, ..item("Possum is running!") }.into(),
             ksni::MenuItem::Separator,
             RadioGroup {
-                selected: SILENT.load(Ordering::Relaxed) as usize,
-                select: Box::new(|_: &mut Self, i: usize| SILENT.store(i == 1, Ordering::Relaxed)),
+                // In Do Not Disturb it screams silently, whatever was picked.
+                selected: brain::silent_now() as usize,
+                select: Box::new(|_: &mut Self, i: usize| {
+                    SILENT.store(i == 1, Ordering::Relaxed);
+                    if let Some(hush) = brain::hush().filter(|_| i == 0) {
+                        tell_why_silent(hush);
+                    }
+                }),
                 options: vec![
                     RadioItem { label: "Scream".into(), ..Default::default() },
                     RadioItem { label: "Scream silently".into(), ..Default::default() },
@@ -643,5 +741,14 @@ mod tests {
         assert_eq!(parse_gdbus_bool("(true,)\n"), Some(true));
         assert_eq!(parse_gdbus_bool("(false,)"), Some(false));
         assert_eq!(parse_gdbus_bool("Error: no such name"), None);
+        // A property comes as a variant.
+        assert_eq!(parse_gdbus_bool("(<true>,)\n"), Some(true));
+        assert_eq!(parse_gdbus_bool("(<false>,)"), Some(false));
+        // A notification's number.
+        assert_eq!(parse_gdbus_u32("(uint32 7,)\n"), Some(7));
+        assert_eq!(parse_gdbus_u32("Error"), None);
+        // gsettings and xfconf-query.
+        assert_eq!(parse_setting("false\n"), Some(false));
+        assert_eq!(parse_setting("Property \"/do-not-disturb\" does not exist"), None);
     }
 }

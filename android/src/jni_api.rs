@@ -90,13 +90,14 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_tick(
     now: jdouble,
     silent: jboolean,
     quiet: jint,
+    hush: jint,
     scene: JFloatArray,
     requests: JIntArray,
 ) -> jint {
     guard(0, || {
         let mut core = running();
         let Some(core) = core.as_mut() else { return 0 };
-        let (numbers, ops) = core.tick(&shared().pictures, now, silent != JNI_FALSE, quiet);
+        let (numbers, ops) = core.tick(&shared().pictures, now, silent != JNI_FALSE, quiet, hush);
         let n = ops.len().min(MAX_REQUESTS);
         if env.set_float_array_region(&scene, 0, &numbers).is_err()
             || env.set_int_array_region(&requests, 0, &ops[..n]).is_err()
