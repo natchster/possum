@@ -11,7 +11,9 @@ never asks for a status update, and always understands exactly how you feel.
 ## What it does
 
 It puts a pixel-art possum on your screen that **runs along the screen
-edge** and **screams**, mouth wide open, lap after lap.
+edge** and **screams**, mouth wide open, lap after lap. It's about 2 cm
+tall on any display. Need a moment? **Stop** in its menu has it stand
+still, mouth shut, until you pick **Run**.
 
 ## Download
 

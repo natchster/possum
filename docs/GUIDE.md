@@ -17,6 +17,7 @@ Everything about Possum in detail. For the short version, see the [README](../RE
 - [How it works](#how-it-works)
 - [Staying quiet](#staying-quiet)
 - [Multiple displays](#multiple-displays)
+- [Size](#size)
 - [Sound design](#sound-design)
 - [Sprite sheet](#sprite-sheet)
 - [Tests](#tests)
@@ -30,8 +31,11 @@ Everything about Possum in detail. For the short version, see the [README](../RE
   up. It alternates between a cartoon `AAAAAAAA!` and a long hiss modelled on
   real Virginia opossum recordings (see [Sound design](#sound-design)).
 - From its menu-bar or tray icon you can switch between **Scream** (with
-  sound) and **Scream silently** (a speech bubble instead), or make it
-  **Scream Now** (see [The menu](#the-menu)).
+  sound) and **Scream silently** (a speech bubble instead), make it
+  **Scream Now**, or **Stop** it: it shuts its mouth and stands still until
+  you pick **Run** (see [The menu](#the-menu)).
+- It's **about 2 cm tall** on any display: it measures the display and
+  sizes itself to match (see [Size](#size)).
 - It ignores clicks and never steals focus, so it never gets in your way.
 - It keeps quiet while the screen is locked, the display is off, or the
   screensaver is running (see [Staying quiet](#staying-quiet)).
@@ -62,7 +66,8 @@ It's the same possum: the Android app runs the very same Rust code for the
 brain, the sprites and the screams, with a small Java app around it.
 
 - **The menu** is Possum's notification: **Scream** / **Scream silently**,
-  **Scream Now** and **Quit Possum**.
+  **Scream Now** and **Quit Possum**. (Android shows at most three buttons
+  on a notification, so there's no **Stop** there.)
 - **Keeping quiet:** besides a locked screen and a display that's off, it
   screams silently (in speech bubbles) while the phone is set to silent or
   vibrate, to Do Not Disturb, or on a call. Scream Now still screams out
@@ -213,8 +218,11 @@ missing target. You can also choose:
    Windows app with no console window. Started from a terminal, it prints
    there, so `target\release\possum.exe --verbose` shows its log.
 
-Windows scales the possum like everything else: at 150% display scaling it's
-1.5 times bigger, so it looks the same size as on a Mac.
+The possum is about 2 cm tall whatever the display scaling: Windows knows
+how many of a monitor's pixels make an inch (its raw DPI, from the
+monitor's own description of its size), and Possum sizes itself from that
+(see [Size](#size)). On a monitor that doesn't say, it scales like
+everything else: at 150% display scaling it's 1.5 times bigger.
 
 ### Windows on Arm
 
@@ -345,7 +353,8 @@ and zips it like a release (`dist/possum-<version>-windows-x86_64.zip`),
 runs the tests under Wine, then runs the app for 10 seconds and saves its
 log and a screenshot of the whole screen in `target/`. Then it tries the
 tray menu: it opens it, closes it with a second click on the icon, chooses
-**Scream Now**, and quits with **Quit Possum**, all through the messages
+**Scream Now**, **Stop** (it must stand still), **Run** (it must set off
+again), and quits with **Quit Possum**, all through the messages
 Windows would send (a small helper,
 [`tools/wine-driver`](../tools/wine-driver/src/main.rs), posts them from
 inside Wine), so your own mouse and keyboard are left alone. `--tests` runs
@@ -521,7 +530,8 @@ and changes fast); and the Intel one won't outlive Rosetta 2.
 
 Click the little screaming possum head: in the **menu bar** on macOS, in the
 **notification area** (tray) on Windows, and in the **tray** on Linux. On
-Android, the menu is Possum's notification, with the same items as buttons. On
+Android, the menu is Possum's notification, with the same items as buttons
+(but **Stop**: a notification has room for three). On
 macOS, **Control-Option-Command-P** (⌃⌥⌘P) also opens the menu, right at the
 mouse pointer, wherever the icon is.
 
@@ -530,6 +540,8 @@ mouse pointer, wherever the icon is.
 | **Scream** *(default)* | You hear the scream; no speech bubble. In Do Not Disturb, it says so instead (see below) |
 | **Scream silently** | No sound; an upright speech bubble instead (`AAAAAAAAH!` or `HSSSSSS!`) |
 | **Scream Now** | Makes it scream right away, out loud even in Do Not Disturb (but not on a call) |
+| **Stop** | It shuts its mouth at once, slows to a stand within a stride (all four paws on the ground) and waits there, quiet. **Scream Now** still makes it scream, standing where it is. The menu's first line then says *Possum is standing still* |
+| **Run** | In place of Stop while it stands: it sets off again, picks up speed, and screams again after a breath |
 | **Quit Possum** | Quits (Ctrl+C also works if you started it from a terminal) |
 
 **When the Mac's menu bar is too full**, macOS silently leaves some icons
@@ -545,9 +557,11 @@ button at the left of the icons shows the ones that didn't fit.
 ## Options
 
 ```
---scale <N>        Size of one sprite pixel (default 3): points on macOS,
-                   pixels at 100% display scaling on Windows, pixels on Linux
---speed <N>        Running speed in the same units per second (default 260)
+--scale <N>        Size of one sprite pixel: points on macOS, pixels at 100%
+                   display scaling on Windows, pixels on Linux (default:
+                   whatever makes the possum about 2 cm tall; see Size)
+--speed <N>        Running speed in the same units per second (default: 260
+                   at --scale 3, in proportion to the possum's size)
 --volume <0..1>    Scream volume (default 0.6)
 --silent           Start in "Scream silently" mode (bubble, no sound)
 -v, --verbose      Log screams, quiet times and display changes to the terminal
@@ -557,7 +571,7 @@ button at the left of the icons shows the ones that didn't fit.
 --iconset <DIR>    Write a macOS .iconset folder and exit
 ```
 
-For example, `cargo run --release -- --scale 4 --speed 400` gives you a big,
+For example, `cargo run --release -- --scale 6 --speed 600` gives you a big,
 fast possum.
 
 ## How it works
@@ -573,6 +587,7 @@ fast possum.
 | `src/track.rs` | The screen border as a rounded rectangle, walked counterclockwise |
 | `src/scream.rs` | Sound synthesis: the cartoon "AAAA" voice and a Virginia opossum long hiss, written out as WAV |
 | `src/quiet.rs`, `src/screens.rs` | When to keep quiet, and which display to run on |
+| `src/size.rs` | How big the possum is: about 2 cm tall, from the display's size |
 | `src/png.rs` | A tiny PNG encoder for the sprite sheet and the app icon |
 
 * **One brain, three bodies.** `brain.rs` has no operating-system code.
@@ -631,7 +646,9 @@ fast possum.
   which GNOME does right after redirecting windows (at most a few seconds,
   for desktops that never set one). On plain X11 it doesn't wait.
 * **Crisp pixels.** The sprites are tiny (64×32) and scaled up with
-  nearest-neighbour sampling, so they stay sharp on any display.
+  nearest-neighbour sampling, by a whole number of the display's pixels
+  wherever that keeps the possum about 2 cm tall, so they stay sharp on any
+  display.
 * **Readable screams.** The speech bubble isn't rotated with the possum. It
   is placed separately, always upright, ahead of the head and toward the
   middle of the screen.
@@ -738,6 +755,7 @@ It moves when the primary display changes:
 | You make **another monitor the main one** | Moves to that monitor |
 | You **unplug** the main monitor | Moves to the display that takes over |
 | You **plug in** a second monitor | Stays where it is, unless the new monitor becomes the main one |
+| The main display is now one with **more or fewer pixels per inch** | Resizes itself to stay about 2 cm tall (see [Size](#size)) |
 | The system briefly reports **no display** while reconfiguring | Waits until a display is back |
 
 When it moves, it keeps going from **the same spot on the same edge**: if it
@@ -751,6 +769,48 @@ looks at the primary display's frame *and* where the overlay window really
 is. The second part matters when the menu bar moves between two identical
 monitors: the primary frame looks exactly the same before and after, and
 only the window's position shows that it's on the wrong monitor.
+
+## Size
+
+The possum is **about 2 cm tall** on any display, whatever its resolution
+or display scaling: its sprite is 32 pixels tall, each about 0.625 mm. The
+system knows how big the display is, from the display's own description of
+itself (its EDID):
+
+| System | Where the display's size comes from |
+|---|---|
+| macOS | `CGDisplayScreenSize`, for the main display |
+| Windows | the monitor's raw DPI (`GetDpiForMonitor`): how many of its pixels make an inch |
+| Linux | RandR's size of the monitor in millimetres (on Wayland desktops, what the compositor tells XWayland) |
+
+To keep the pixel art crisp, each sprite pixel is a whole number of the
+display's pixels whenever that keeps the possum about 2 cm tall (between
+18 and 23.7 mm), and otherwise a half. For example:
+
+| Display | Pixels a millimetre | A sprite pixel | The possum |
+|---|---|---|---|
+| MacBook Pro 14" or 16", default resolution | 10 | 3 points (6 pixels) | 19.2 mm |
+| 34" ultrawide monitor, 3440×1440 | 4.2 | 3 pixels | 22.7 mm |
+| 13.3" to 15.6" full HD laptop | 5.6 to 6.5 | 4 pixels | 19.6 to 22.9 mm |
+| 24" full HD monitor | 3.6 | 2.5 pixels | 22.1 mm |
+| 27" 4K monitor | 6.4 | 4 pixels | 19.9 mm |
+
+Its speed goes with its size, so it looks the same everywhere: its legs keep
+the same rhythm and it crosses the screen in about the same time. When the
+primary display changes (see [Multiple displays](#multiple-displays)), it
+measures the new one and resizes itself as it runs.
+
+A display that doesn't say how big it is (projectors and virtual machines
+often don't), or says something that can't be right, gets the size the
+possum always had: 3 points on macOS, 3 pixels at 100% display scaling on
+Windows (4.5 at 150%), 3 pixels on Linux. So does the Windows version under
+Wine, whose raw DPI isn't measured. Android goes by its own measure, 3
+density-independent pixels (dp) a sprite pixel. `--scale` sets the size
+yourself, and `--verbose` says what it measured:
+
+```
+possum [    0.00s] the display has 4.23 pixels a millimetre (108 dpi): a sprite pixel is 3 units (3 pixels), so the possum is 22.7 mm tall
+```
 
 ## Sound design
 
@@ -778,10 +838,12 @@ the model is based on), plus
 
 ## Sprite sheet
 
-![Run cycle (top two rows), scream cycle (next two rows), and the full screaming pose](sprites.png)
+![Run cycle (top two rows), scream cycle (next two rows), standing still, and the full screaming pose](sprites.png)
 
 The top two rows are the 8-frame run cycle, mouth hanging open. The next two
-are the scream cycle, head thrown back like the «бежит орёт» meme. Regenerate
+are the scream cycle, head thrown back like the «бежит орёт» meme. Then it
+stands still, as after **Stop**: all four paws down and its mouth shut, and
+screaming where it stands (**Scream Now**). Regenerate
 the sheet with `cargo run -- --preview sheet.png`, and the picture at the top
 of the README with `cargo run -- --portrait possum.png`.
 
@@ -795,7 +857,11 @@ The tests cover the possum's behaviour (it screams right away, alternates
 AAAA and hiss, keeps quiet while locked, cuts a scream off when the screen
 locks, shows a bubble only in silent mode and keeps it on screen, screams
 silently in Do Not Disturb with Scream Now still heard (but not on a call),
-holds its first scream while asked to); on macOS, telling whether the menu-bar icon
+holds its first scream while asked to, stops within a stride with its mouth
+shut and sets off again on Run); its size (about 2 cm on the displays it
+was just right on, full HD laptops and anything from 2.7 to 25 pixels a
+millimetre, in whole or half pixels, and the old size when a display
+doesn't say); on macOS, telling whether the menu-bar icon
 fits from the spots macOS 27 really uses, and the note's five seconds; the
 counterclockwise track on screens of every shape and keeping the same edge
 after a screen change; following the primary display through every kind of
@@ -896,8 +962,12 @@ Xwayland crash above. Run there, it was checked that:
 - it runs counterclockwise over the top bar and the dock, cut cleanly to its
   outline, and GNOME keeps running;
 - its tray icon appears in the top bar, and the menu's **Scream**, **Scream
-  silently**, **Scream Now** and **Quit Possum** work (clicked through
-  GNOME's D-Bus menu interface);
+  silently**, **Scream Now**, **Stop**, **Run** and **Quit Possum** work
+  (clicked through GNOME's D-Bus menu interface);
+- it reads the display's size in millimetres through XWayland (the virtual
+  display's 320×200 mm), and resizes itself as it runs when that changes
+  (`xrandr --setmonitor` with a 14" full HD laptop's 208×130 mm for its
+  1280×800 pixels: 4 pixels a sprite pixel instead of 2.5);
 - it plays sound through PipeWire's `pw-play`;
 - locking the session (`loginctl lock-session`, like Super+L) silences it,
   and it screams again after unlocking;
