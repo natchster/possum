@@ -141,6 +141,11 @@ pub extern "system" fn Java_io_github_natchster_possum_Native_statusIcon(_env: J
     guard(0, || shared().pictures.status_icon() as jint)
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_natchster_possum_Native_portrait(_env: JNIEnv, _class: JClass) -> jint {
+    guard(0, || shared().pictures.portrait() as jint)
+}
+
 /// `[paws x, paws y, possum width, possum height, bubble width, bubble
 /// height]`, in sprite pixels: the paws are where the possum touches the
 /// screen edge, from the top-left of its pictures.

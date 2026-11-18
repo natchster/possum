@@ -6,7 +6,9 @@
 //!   paws. Every tick it moves to where the brain says and rotates to the
 //!   direction of travel, so the paws always stay on the screen edge.
 //! * Frames are tiny native-resolution `CGImage`s scaled up with
-//!   nearest-neighbour filtering, so the pixel art stays razor sharp.
+//!   nearest-neighbour filtering, so the pixel art stays razor sharp. How
+//!   far: about 2 cm tall, from the size `CGDisplayScreenSize` gives for the
+//!   primary display (see size.rs).
 //! * Sounds are played with `NSSound`; lock, screensaver and display sleep
 //!   come from system notifications plus a direct check (see quiet.rs).
 //! * The menu hangs off a menu-bar icon, and Control-Option-Command-P opens
@@ -36,8 +38,8 @@ use objc2_core_foundation::{
     CFBoolean, CFData, CFRetained, CFString, CFType, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize,
 };
 use objc2_core_graphics::{
-    CGBitmapInfo, CGColor, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGDisplayIsAsleep, CGImage,
-    CGImageAlphaInfo, CGMainDisplayID, CGSessionCopyCurrentDictionary, kCGColorSpaceSRGB,
+    CGBitmapInfo, CGColor, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGDisplayIsAsleep,
+    CGDisplayScreenSize, CGImage, CGImageAlphaInfo, CGMainDisplayID, CGSessionCopyCurrentDictionary, kCGColorSpaceSRGB,
 };
 use objc2_foundation::{
     NSData, NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSNotificationSuspensionBehavior,
@@ -45,8 +47,9 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CALayer, CATextLayer, CATransaction, kCAFilterNearest, kCAGravityResize};
 
-use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, Scene, Settings};
+use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, STOPPED, Scene, Settings};
 use crate::scream::{Kind, Rng};
+use crate::size::{self, Size};
 use crate::sprite::{self, Canvas};
 use crate::{Options, quiet, screens};
 
@@ -61,9 +64,11 @@ thread_local! {
     static MENU: RefCell<Option<Retained<NSMenu>>> = const { RefCell::new(None) };
 }
 
-/// Menu item tags for the two scream modes.
+/// Menu item tags for the two scream modes, and the line at the top that
+/// says what the possum is doing.
 const TAG_SCREAM: isize = 0;
 const TAG_SCREAM_SILENTLY: isize = 1;
+const TAG_STATUS: isize = 2;
 
 /// The keyboard shortcut that opens the menu, as macOS writes it.
 const SHORTCUT: &str = "⌃⌥⌘P";
@@ -138,6 +143,16 @@ fn to_cg(r: screens::Rect) -> CGRect {
 /// a screen at all. There can briefly be none while displays reconfigure.
 fn primary_screen_frame(mtm: MainThreadMarker) -> Option<CGRect> {
     NSScreen::screens(mtm).iter().next().map(|s| s.frame())
+}
+
+/// How big the primary screen is, if it says: its size in pixels (points
+/// times the backing scale) and in millimetres. The main display is the
+/// primary screen, the one at the origin with the menu bar.
+fn primary_display(mtm: MainThreadMarker) -> Option<size::Display> {
+    let screen = NSScreen::screens(mtm).iter().next()?;
+    let (frame, backing) = (screen.frame(), screen.backingScaleFactor());
+    let mm = CGDisplayScreenSize(CGMainDisplayID());
+    size::Display::new((frame.size.width * backing, frame.size.height * backing), (mm.width, mm.height), backing)
 }
 
 // ---------------------------------------------------------------------------
@@ -332,7 +347,6 @@ fn overlay_window(mtm: MainThreadMarker, frame: CGRect) -> Retained<NSWindow> {
 fn possum_layers(root: &CALayer, scale: f64) -> (Retained<CALayer>, Retained<CALayer>, Retained<CALayer>) {
     let (pw, ph) = (sprite::POSSUM_W as f64, sprite::POSSUM_H as f64);
     let body = CALayer::new();
-    body.setBounds(rect(pw * scale, ph * scale));
     // Rotate and position around the paws (layer unit space is y-up).
     body.setAnchorPoint(CGPoint::new(sprite::FEET_X as f64 / pw, 1.0 - sprite::FEET_Y as f64 / ph));
     pixelated(&body);
@@ -349,14 +363,21 @@ fn possum_layers(root: &CALayer, scale: f64) -> (Retained<CALayer>, Retained<CAL
     let yell = CALayer::new();
     pixelated(&yell);
     yell.setHidden(true);
-    let ycanvas = sprite::yell(0);
-    yell.setBounds(rect(ycanvas.w as f64 * scale, ycanvas.h as f64 * scale));
     yell.setAnchorPoint(CGPoint::new(0.0, 0.5));
-    let (mx, my) = sprite::MOUTH_ANCHOR;
-    yell.setPosition(CGPoint::new(mx as f64 * scale, (ph - my as f64) * scale));
     body.addSublayer(&yell);
 
+    size_possum(&body, &yell, scale);
     (body, bubble, yell)
+}
+
+/// Sizes the possum's body and yell lines for `scale` points a sprite pixel.
+fn size_possum(body: &CALayer, yell: &CALayer, scale: f64) {
+    let (pw, ph) = (sprite::POSSUM_W as f64, sprite::POSSUM_H as f64);
+    body.setBounds(rect(pw * scale, ph * scale));
+    let ycanvas = sprite::yell(0);
+    yell.setBounds(rect(ycanvas.w as f64 * scale, ycanvas.h as f64 * scale));
+    let (mx, my) = sprite::MOUTH_ANCHOR;
+    yell.setPosition(CGPoint::new(mx as f64 * scale, (ph - my as f64) * scale));
 }
 
 /// A note in the top-right corner, below the menu bar, with the possum's
@@ -502,6 +523,10 @@ struct Possum {
     sounds: Sounds,
     brain: Brain,
     screen: CGRect,
+    /// `--scale` and `--speed`, if given.
+    options: (Option<f64>, Option<f64>),
+    /// Points per sprite pixel.
+    scale: f64,
     clock: Instant,
     shown: Option<(bool, usize)>,
     yell_shown: Option<usize>,
@@ -548,20 +573,23 @@ impl Possum {
             // screen on the first display check, a second later.
             rect(1440.0, 900.0)
         });
-        let settings = Settings { scale: opts.scale, speed: opts.speed, start: opts.start, verbose: opts.verbose };
+        let display = primary_display(mtm);
+        let size = Size::pick(opts.scale, opts.speed, display, 1.0);
+        let settings = Settings { scale: size.scale, speed: size.speed, start: opts.start, verbose: opts.verbose };
         let mut brain = Brain::new(&settings, screen.size.width, screen.size.height, durations, rng);
 
         let window = overlay_window(mtm, screen);
         let view = window.contentView().expect("window has a content view");
         view.setWantsLayer(true);
         let root = view.layer().expect("layer-backed view");
-        let (body, bubble, yell) = possum_layers(&root, opts.scale);
+        let (body, bubble, yell) = possum_layers(&root, size.scale);
         let hint = Hint::new(&root);
         window.orderFrontRegardless();
 
         let mut sounds = sounds;
         brain.update(sounds.probe());
         brain.log(format_args!("running around the primary display, {}x{}", screen.size.width, screen.size.height));
+        brain.log(format_args!("{}", size.describe(display, opts.scale.is_some())));
         if shortcut {
             brain.log(format_args!("{SHORTCUT} opens the menu"));
         }
@@ -578,6 +606,8 @@ impl Possum {
             sounds,
             brain,
             screen,
+            options: (opts.scale, opts.speed),
+            scale: size.scale,
             clock: Instant::now(),
             shown: None,
             yell_shown: None,
@@ -641,16 +671,31 @@ impl Possum {
         self.last_hint = Some(now);
     }
 
-    /// Follow display changes (resolution, arrangement, plugging monitors);
-    /// see screens.rs.
+    /// Follow display changes (resolution, arrangement, plugging monitors;
+    /// see screens.rs), and keep the possum about 2 cm tall on the display.
     fn check_screen(&mut self) {
-        let primary = primary_screen_frame(self.mtm).map(to_rect);
-        let Some(frame) = screens::follow(primary, to_rect(self.screen), to_rect(self.window.frame())) else {
+        let Some(primary) = primary_screen_frame(self.mtm).map(to_rect) else {
             return;
         };
-        self.screen = to_cg(frame);
-        self.window.setFrame_display(self.screen, true);
-        self.brain.set_screen(frame.w, frame.h);
+        let display = primary_display(self.mtm);
+        let size = Size::pick(self.options.0, self.options.1, display, 1.0);
+        let moved = screens::follow(Some(primary), to_rect(self.screen), to_rect(self.window.frame())).is_some();
+        if moved {
+            self.screen = to_cg(primary);
+            self.window.setFrame_display(self.screen, true);
+        } else if size.scale == self.scale {
+            return;
+        }
+        self.brain.set_screen(primary.w, primary.h, size.scale, size.speed);
+        if size.scale != self.scale {
+            self.brain.log(format_args!("{}", size.describe(display, self.options.0.is_some())));
+            self.scale = size.scale;
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
+            size_possum(&self.body, &self.yell, size.scale);
+            CATransaction::commit();
+            self.bubble_shown = None;
+        }
     }
 
     fn tick(&mut self) {
@@ -739,6 +784,13 @@ define_class!(
             SCREAM_NOW.store(true, Ordering::Relaxed);
         }
 
+        /// "Stop" / "Run".
+        #[unsafe(method(stopOrRun:))]
+        fn stop_or_run(&self, _sender: &NSMenuItem) {
+            STOPPED.fetch_xor(true, Ordering::Relaxed);
+            show_stopped();
+        }
+
         /// The keyboard shortcut: the menu, at the mouse pointer.
         #[unsafe(method(showMenu:))]
         fn show_menu(&self, _sender: Option<&AnyObject>) {
@@ -772,6 +824,26 @@ fn check_scream_mode() {
                 let on = (item.tag() == TAG_SCREAM_SILENTLY) == silent;
                 item.setState(if on { NSControlStateValueOn } else { NSControlStateValueOff });
             }
+        }
+    });
+}
+
+/// Says in the menu whether the possum is stopped, and offers the other.
+fn show_stopped() {
+    let stopped = STOPPED.load(Ordering::Relaxed);
+    MENU.with(|menu| {
+        let Some(menu) = &*menu.borrow() else {
+            return;
+        };
+        for item in menu.itemArray().iter() {
+            let title = if item.action() == Some(sel!(stopOrRun:)) {
+                if stopped { "Run" } else { "Stop" }
+            } else if item.tag() == TAG_STATUS {
+                if stopped { "Possum is standing still" } else { "Possum is running!" }
+            } else {
+                continue;
+            };
+            item.setTitle(&NSString::from_str(title));
         }
     });
 }
@@ -822,6 +894,7 @@ fn install_status_item(mtm: MainThreadMarker, app: &NSApplication, target: &Menu
     let menu = NSMenu::new(mtm);
     let header = menu_item(mtm, "Possum is running!", None, "", None);
     header.setEnabled(false);
+    header.setTag(TAG_STATUS);
     menu.addItem(&header);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let silent = SILENT.load(Ordering::Relaxed);
@@ -833,6 +906,7 @@ fn install_status_item(mtm: MainThreadMarker, app: &NSApplication, target: &Menu
     }
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(mtm, "Scream Now", Some(sel!(screamNow:)), "s", Some(target)));
+    menu.addItem(&menu_item(mtm, "Stop", Some(sel!(stopOrRun:)), "", Some(target)));
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     menu.addItem(&menu_item(mtm, "Quit Possum", Some(sel!(terminate:)), "q", Some(app)));
     item.setMenu(Some(&menu));

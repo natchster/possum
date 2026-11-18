@@ -6,6 +6,7 @@
 //!   start-up.
 //! * `track.rs`, `screens.rs`, `quiet.rs`: the path around the screen, which
 //!   display to run on, and when not to make a sound.
+//! * `size.rs`: how big the possum is (about 2 cm tall on any display).
 //! * `platform/`: the operating-system parts (overlay window, sound, menu).
 //! * `render.rs`: software drawing for Windows and Linux.
 
@@ -21,6 +22,7 @@ mod quiet;
 mod render;
 mod scream;
 mod screens;
+mod size;
 mod sprite;
 mod track;
 
@@ -33,8 +35,9 @@ use sprite::Canvas;
 // ---------------------------------------------------------------------------
 
 pub struct Options {
-    pub scale: f64,
-    pub speed: f64,
+    /// From the command line, if given (else see size.rs).
+    pub scale: Option<f64>,
+    pub speed: Option<f64>,
     pub volume: f32,
     pub silent: bool,
     pub verbose: bool,
@@ -51,9 +54,11 @@ USAGE:
     possum [OPTIONS]
 
 OPTIONS:
-    --scale <N>          Size of one sprite pixel (default 3), in points on
-                         macOS and display-scaled pixels elsewhere
-    --speed <N>          Running speed in the same units per second (default 260)
+    --scale <N>          Size of one sprite pixel, in points on macOS, pixels
+                         at 100% display scaling on Windows, pixels on Linux
+                         (default: whatever makes the possum about 2 cm tall)
+    --speed <N>          Running speed in the same units per second (default:
+                         260 at --scale 3, in proportion to the possum's size)
     --volume <0..1>      Scream volume (default 0.6)
     --silent             Start in \"Scream silently\" mode: a speech bubble
                          instead of sound (switch in the menu too)
@@ -80,8 +85,8 @@ fn parse_number(name: &str, v: &str) -> Result<f64, String> {
 
 fn parse_args() -> Options {
     let mut o = Options {
-        scale: 3.0,
-        speed: 260.0,
+        scale: None,
+        speed: None,
         volume: 0.6,
         silent: false,
         verbose: false,
@@ -105,8 +110,8 @@ fn parse_args() -> Options {
             })
         };
         match arg.as_str() {
-            "--scale" => o.scale = number("--scale", value("--scale")).clamp(1.0, 12.0),
-            "--speed" => o.speed = number("--speed", value("--speed")).clamp(10.0, 5000.0),
+            "--scale" => o.scale = Some(number("--scale", value("--scale")).clamp(1.0, 12.0)),
+            "--speed" => o.speed = Some(number("--speed", value("--speed")).clamp(10.0, 5000.0)),
             "--volume" => o.volume = number("--volume", value("--volume")).clamp(0.0, 1.0) as f32,
             "--silent" | "--mute" => o.silent = true,
             "-v" | "--verbose" => o.verbose = true,
@@ -149,14 +154,18 @@ fn write_png(path: &std::path::Path, c: &Canvas, scale: usize, bg: Option<[u8; 3
     });
 }
 
-/// Sprite sheet: 8 run frames, 8 scream frames, and the full screaming pose.
+/// Sprite sheet: 8 run frames, 8 scream frames, standing still (quiet and
+/// screaming), and the full screaming pose.
 fn write_preview(path: &str) {
     let art = sprite::possum();
     let (cw, ch) = (sprite::POSSUM_W + 4, sprite::POSSUM_H + 4);
     let (pose, (px, _)) = sprite::screaming_pose(brain::AAAA_SHOUTS[0]);
-    let pose_y = ch * 4 + 2;
+    let stand = sprite::STAND;
+    let frames: Vec<&Canvas> =
+        art.run[..stand].iter().chain(&art.scream[..stand]).chain([&art.run[stand], &art.scream[stand]]).collect();
+    let pose_y = ch * frames.len().div_ceil(4) as i32 + 2;
     let mut sheet = Canvas::new(cw * 4, pose_y + pose.h + 3);
-    for (i, frame) in art.run.iter().chain(art.scream.iter()).enumerate() {
+    for (i, frame) in frames.into_iter().enumerate() {
         let i = i as i32;
         sheet.blit(frame, (i % 4) * cw + 2, (i / 4) * ch + 2);
     }

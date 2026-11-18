@@ -101,6 +101,22 @@ impl Pictures {
         self.count() - 1
     }
 
+    /// The number of the first scream frame, with its first yell lines: the
+    /// picture on the app's screen.
+    pub fn portrait(&self) -> usize {
+        let scene = Scene {
+            x: 0.0,
+            y: 0.0,
+            heading: 0.0,
+            screaming: true,
+            frame: 0,
+            yell: Some(0),
+            bubble: None,
+            check_displays: false,
+        };
+        self.possum(&scene)
+    }
+
     /// The tallest and widest possum picture, unscaled: the size of the view
     /// the possum is drawn in.
     pub fn possum_size(&self) -> (i32, i32) {
@@ -189,6 +205,10 @@ pub const SCENE_LEN: usize = 11;
 pub struct Core {
     brain: Brain,
     size: (f64, f64),
+    /// Pixels per sprite pixel, and pixels per second: Android picks them
+    /// from the display's density (`PossumService`).
+    scale: f64,
+    speed: f64,
 }
 
 /// The brain's `Host`: it can't play anything itself, so it notes what the
@@ -219,14 +239,14 @@ impl Core {
     pub fn new(voices: &Voices, scale: f64, speed: f64, width: f64, height: f64, seed: u32) -> Self {
         let settings = Settings { scale, speed, start: 0.0, verbose: true };
         let brain = Brain::new(&settings, width, height, voices.seconds.clone(), Rng::new(seed));
-        Self { brain, size: (width, height) }
+        Self { brain, size: (width, height), scale, speed }
     }
 
     /// The track changed size (rotation, resolution, a taskbar): keep
     /// running from the same spot.
     pub fn resize(&mut self, width: f64, height: f64) {
         if (width, height) != self.size {
-            self.brain.set_screen(width, height);
+            self.brain.set_screen(width, height, self.scale, self.speed);
             self.size = (width, height);
         }
     }
@@ -293,7 +313,7 @@ mod tests {
     fn picture_numbers_match_what_the_desktop_draws() {
         let p = Pictures::new();
         let art = Art::new();
-        for frame in 0..sprite::RUN_FRAMES {
+        for frame in 0..=sprite::STAND {
             for (screaming, yell) in [(false, None), (true, Some(0)), (true, Some(1))] {
                 let scene =
                     Scene { x: 0.0, y: 0.0, heading: 0.0, screaming, frame, yell, bubble: None, check_displays: false };
@@ -309,6 +329,7 @@ mod tests {
                 }
             }
         }
+        assert_eq!(p.get(p.portrait()).unwrap().rgba_scaled(1), art.scream[0][0].rgba_scaled(1));
         let icon = p.get(p.status_icon()).unwrap();
         assert_eq!(icon.rgba_scaled(1), sprite::status_icon().rgba_scaled(1));
         assert!(p.get(p.count()).is_none());

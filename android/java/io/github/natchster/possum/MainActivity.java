@@ -119,7 +119,7 @@ public final class MainActivity extends Activity {
         ImageView portrait = new ImageView(this);
         Native.init();
         // The first scream frame, crisp at 4 dp per sprite pixel.
-        int[] p = Native.picture(8);
+        int[] p = Native.picture(Native.portrait());
         Bitmap bitmap = Bitmap.createBitmap(p, 2, p[0], p[0], p[1], Bitmap.Config.ARGB_8888);
         BitmapDrawable drawable = new BitmapDrawable(getResources(), bitmap);
         drawable.setFilterBitmap(false);

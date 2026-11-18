@@ -19,6 +19,10 @@ use crate::track::Track;
 /// (you read it in a bubble, no sound).
 pub static SILENT: AtomicBool = AtomicBool::new(false);
 pub static SCREAM_NOW: AtomicBool = AtomicBool::new(false);
+/// "Stop" / "Run": `true` once Stop is picked. The possum then shuts its
+/// mouth and slows to a stand within a stride, and stays put (screaming
+/// only when asked to, with Scream Now) until Run is picked.
+pub static STOPPED: AtomicBool = AtomicBool::new(false);
 /// The controls above are process-wide: tests that touch them (here and in
 /// the Android library) take turns.
 #[cfg(test)]
@@ -133,6 +137,22 @@ pub struct Scene {
     pub check_displays: bool,
 }
 
+/// Running, or stopping (see `STOPPED`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Motion {
+    Running,
+    /// Slowing down evenly, to stand `left` further on: where its paws are
+    /// on the ground between strides. `from` is how far that was at first.
+    Stopping {
+        left: f64,
+        from: f64,
+    },
+    Standing,
+}
+
+/// How long it takes to get back up to full speed.
+const SET_OFF_SECONDS: f64 = 0.3;
+
 /// One bubble's size in sprite pixels and its pointer tip in unit space.
 #[derive(Clone, Copy)]
 struct BubbleSize {
@@ -149,6 +169,10 @@ pub struct Brain {
     height: f64,
     track: Track,
     distance: f64,
+    motion: Motion,
+    /// Fraction of full speed: 1 running, less while stopping or setting
+    /// off again.
+    pace: f64,
 
     last_tick: f64,
     next_check: f64,
@@ -196,6 +220,8 @@ impl Brain {
             height,
             distance: settings.start * track.perimeter(),
             track,
+            motion: Motion::Running,
+            pace: 1.0,
             last_tick: 0.0,
             next_check: 0.0,
             scream_until: 0.0,
@@ -250,15 +276,32 @@ impl Brain {
         (self.width, self.height)
     }
 
-    /// The primary display changed size: keep running from the same spot on
-    /// the same edge of the new one.
-    pub fn set_screen(&mut self, width: f64, height: f64) {
-        let track = make_track(width, height, self.scale);
+    /// Screen units per sprite pixel.
+    #[cfg(test)]
+    pub fn scale(&self) -> f64 {
+        self.scale
+    }
+
+    /// The primary display changed: keep running from the same spot on the
+    /// same edge of the new one, at the size and speed that suit it (see
+    /// size.rs).
+    pub fn set_screen(&mut self, width: f64, height: f64, scale: f64, speed: f64) {
+        if let Motion::Stopping { left, from } = &mut self.motion {
+            *left *= scale / self.scale;
+            *from *= scale / self.scale;
+        }
+        let resized = scale != self.scale;
+        self.scale = scale;
+        self.speed = speed;
+        let track = make_track(width, height, scale);
         self.distance = self.track.carry_over(self.distance, &track);
         self.track = track;
         self.width = width;
         self.height = height;
         self.log(format_args!("following the primary display: now {width}x{height}"));
+        if resized {
+            self.log(format_args!("a sprite pixel is now {scale} units, and it runs {speed:.0} units a second"));
+        }
     }
 
     pub fn tick(&mut self, now: f64, host: &mut dyn Host) -> Scene {
@@ -285,11 +328,14 @@ impl Brain {
             self.was_quiet = quiet;
         }
 
+        self.follow_stop_and_run(now, host);
         let asked = SCREAM_NOW.swap(false, Ordering::Relaxed);
         if asked {
             self.next_scream = now;
         }
-        if now >= self.next_scream && !self.holding {
+        // Stopped, it only screams when asked.
+        let due = now >= self.next_scream && (asked || self.motion == Motion::Running);
+        if due && !self.holding {
             self.start_scream(now, host, asked);
         }
         let screaming = now < self.scream_until;
@@ -315,13 +361,16 @@ impl Brain {
 
         // Panic makes it run a bit faster.
         let speed = self.speed * if screaming { 1.3 } else { 1.0 };
-        self.distance += speed * dt;
+        self.distance += self.step(speed, dt);
         let pose = self.track.pose(self.distance);
 
         // Advance the run cycle by distance so the legs keep up with the
         // speed (one full cycle per ~2 body lengths... of tiny legs).
-        let cycle = 32.0 * self.scale;
-        let frame = ((self.distance / cycle) * sprite::RUN_FRAMES as f64) as usize % sprite::RUN_FRAMES;
+        let frame = if self.motion == Motion::Standing {
+            sprite::STAND
+        } else {
+            ((self.distance / self.cycle()) * sprite::RUN_FRAMES as f64) as usize % sprite::RUN_FRAMES
+        };
 
         let (mut x, mut y) = (pose.x, pose.y);
         if screaming {
@@ -343,6 +392,71 @@ impl Brain {
             yell: screaming.then_some((now * 10.0) as usize % 2),
             bubble,
             check_displays,
+        }
+    }
+
+    /// One run cycle, in screen units (about two body lengths).
+    fn cycle(&self) -> f64 {
+        32.0 * self.scale
+    }
+
+    /// Acts on Stop and Run from the menu.
+    fn follow_stop_and_run(&mut self, now: f64, host: &mut dyn Host) {
+        let stop = STOPPED.load(Ordering::Relaxed);
+        match self.motion {
+            Motion::Running if stop => {
+                // Mouth shut at once: that's the end of this scream.
+                if now < self.scream_until {
+                    host.hush();
+                    self.scream_until = now;
+                }
+                let left = self.distance_to_stand();
+                self.motion = Motion::Stopping { left, from: left };
+                self.log(format_args!("stopping: it stands still {left:.0} units on"));
+            }
+            Motion::Stopping { .. } | Motion::Standing if !stop => {
+                self.motion = Motion::Running;
+                // Off again, after a breath (or once a Scream Now is over).
+                self.next_scream = self.scream_until.max(now) + self.rng.range(1.0, 3.0) as f64;
+                self.log(format_args!("running again"));
+            }
+            _ => {}
+        }
+    }
+
+    /// How far it is to the nearest spot ahead where it can stand still:
+    /// between strides, where the run cycle starts over (frame 0) or is
+    /// halfway (frame 4), so its body doesn't bob. At least a quarter of a
+    /// stride on, so it doesn't stop dead.
+    fn distance_to_stand(&self) -> f64 {
+        let half = self.cycle() / 2.0;
+        let left = half - self.distance.rem_euclid(half);
+        if left < half / 2.0 { left + half } else { left }
+    }
+
+    /// How far it goes this tick at `speed` (screen units a second), slowing
+    /// to a stand or picking up speed again as the menu says.
+    fn step(&mut self, speed: f64, dt: f64) -> f64 {
+        match self.motion {
+            Motion::Running => {
+                self.pace = (self.pace + dt / SET_OFF_SECONDS).min(1.0);
+                speed * self.pace * dt
+            }
+            Motion::Stopping { left, from } => {
+                // Braking evenly: the speed goes with the square root of the
+                // distance left. Never quite a crawl, so it gets there.
+                self.pace = self.pace.min((left / from).sqrt()).max(0.15);
+                let step = (speed * self.pace * dt).min(left);
+                if step < left {
+                    self.motion = Motion::Stopping { left: left - step, from };
+                } else {
+                    self.motion = Motion::Standing;
+                    self.pace = 0.0;
+                    self.log(format_args!("standing still"));
+                }
+                step
+            }
+            Motion::Standing => 0.0,
         }
     }
 
@@ -470,6 +584,7 @@ mod tests {
         let guard = TEST_CONTROLS.lock().unwrap_or_else(|e| e.into_inner());
         SILENT.store(false, Ordering::Relaxed);
         SCREAM_NOW.store(false, Ordering::Relaxed);
+        STOPPED.store(false, Ordering::Relaxed);
         HUSH.store(0, Ordering::Relaxed);
         guard
     }
@@ -653,9 +768,83 @@ mod tests {
         let mut host =
             FakeHost { probe: Probe { screen_locked: Some(true), ..Probe::default() }, ..Default::default() };
         let before = b.tick(0.0, &mut host);
-        b.set_screen(3440.0, 1440.0);
+        b.set_screen(3440.0, 1440.0, 3.0, 260.0);
         let after = b.tick(0.01, &mut host);
         assert!((before.heading - after.heading).abs() < 1e-9, "{before:?} -> {after:?}");
         assert_eq!(b.screen_size(), (3440.0, 1440.0));
+    }
+
+    #[test]
+    fn a_new_screen_can_make_it_bigger_and_faster() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost::default());
+        b.hold_screams(true); // no panic speed-ups
+        let small = run(&mut b, &mut host, 0.0, 0.5);
+        b.set_screen(1920.0, 1080.0, 4.0, 4.0 / 3.0 * 260.0);
+        let big = run(&mut b, &mut host, 0.5, 1.0);
+        assert_eq!(b.scale(), 4.0);
+        // Its legs keep the same rhythm: the run cycle grows with it.
+        let frames = |s: &[Scene]| s.windows(2).filter(|w| w[0].frame != w[1].frame).count();
+        assert!(frames(&small).abs_diff(frames(&big)) <= 1, "{} vs {}", frames(&small), frames(&big));
+    }
+
+    /// The scenes once it's standing: from the first standing one on.
+    fn standing(scenes: &[Scene]) -> &[Scene] {
+        let first = scenes.iter().position(|s| s.frame == sprite::STAND).expect("it never stood still");
+        &scenes[first..]
+    }
+
+    #[test]
+    fn stop_shuts_its_mouth_and_it_stands_still_within_a_stride() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost::default());
+        let running = run(&mut b, &mut host, 0.0, 0.5); // the first "AAAA" is playing
+        assert!(running.last().unwrap().screaming);
+        let hushes = host.hushes;
+        STOPPED.store(true, Ordering::Relaxed);
+        let scenes = run(&mut b, &mut host, 0.5, 20.0);
+        assert!(host.hushes > hushes, "the scream should have been cut off");
+        assert!(scenes.iter().all(|s| !s.screaming && s.bubble.is_none()), "its mouth stays shut");
+        assert_eq!(host.played.len(), 1, "no more screams while it stands");
+        // It slows down to a stand within a stride and well within a second...
+        let at = scenes.iter().position(|s| s.frame == sprite::STAND).unwrap();
+        assert!(at < 60, "took {at} ticks to stop");
+        let still = standing(&scenes);
+        let (from, to) = (running.last().unwrap(), &still[0]);
+        let travelled = ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt();
+        assert!(travelled <= 1.5 * 16.0 * 3.0 + 6.0, "ran {travelled} units after Stop");
+        // ...at the end of a half stride, where its paws are all down...
+        assert!(matches!(scenes[at - 1].frame, 3 | 7), "stood after frame {}", scenes[at - 1].frame);
+        // ...and stays put.
+        assert!(still.iter().all(|s| (s.x, s.y, s.frame) == (to.x, to.y, sprite::STAND)));
+    }
+
+    #[test]
+    fn standing_it_screams_only_when_asked_and_runs_on_when_told() {
+        let _g = reset_controls();
+        let (mut b, mut host) = (brain(), FakeHost::default());
+        run(&mut b, &mut host, 0.0, 0.5);
+        STOPPED.store(true, Ordering::Relaxed);
+        let still = run(&mut b, &mut host, 0.5, 5.0);
+        let spot = (standing(&still)[0].x, standing(&still)[0].y);
+        let played = host.played.len();
+        SCREAM_NOW.store(true, Ordering::Relaxed);
+        let scream = run(&mut b, &mut host, 5.0, 6.0);
+        assert_eq!(host.played.len(), played + 1, "Scream Now screams");
+        for s in &scream {
+            assert!(s.screaming && s.frame == sprite::STAND, "{s:?}");
+            // Trembling, but in place.
+            assert!((s.x - spot.0).abs() <= 2.0 && (s.y - spot.1).abs() <= 2.0, "{s:?} moved from {spot:?}");
+        }
+        assert!(!run(&mut b, &mut host, 6.0, 7.0).last().unwrap().screaming, "and shuts its mouth again");
+
+        STOPPED.store(false, Ordering::Relaxed);
+        let off = run(&mut b, &mut host, 7.0, 12.0);
+        assert!(off.iter().all(|s| s.frame != sprite::STAND), "Run sets it off at once");
+        assert!(off.last().unwrap().x > spot.0 + 100.0, "{:?}", off.last());
+        // Picking up speed, not at full speed from the first tick.
+        let first_step = off[1].x - off[0].x;
+        assert!(first_step < 260.0 / 60.0, "first step {first_step}");
+        assert!(host.played.len() > played + 1, "and screams again");
     }
 }

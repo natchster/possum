@@ -105,6 +105,25 @@ const HEAD_OPEN: [&str; 15] = [
     "..gccccccc........",
 ];
 
+/// Standing still: mouth shut, a thin lip line under the snout.
+const HEAD_SHUT: [&str; 15] = [
+    "..bb..............",
+    ".bppb.............",
+    ".bppbb............",
+    ".bpbgll...........",
+    "..bgllwww.........",
+    ".gglwwwwwww.......",
+    "ggwwwbbwwwwwww....",
+    "gwwwbehbwwwwwwwn..",
+    "gwwwbeebwwwwwwwnn.",
+    "gwwwwbbwwwwwwwwn..",
+    "gwwwwwwwmmmmmmc...",
+    "gcwwwwwwccccc.....",
+    ".gcwwwwccc........",
+    ".gccwwwcc.........",
+    "..gccccc..........",
+];
+
 /// Screaming, after the famous "бежит орёт" ("runs, screams") opossum: head
 /// thrown back, snout pointing at the sky, jaws agape with every fang showing.
 /// 20 columns wide.
@@ -308,6 +327,9 @@ pub const BUBBLE_ANCHOR: (f32, f32) = ((SCREAM_HEAD_X + 12) as f32, (HEAD_Y - 1)
 pub const MOUTH_ANCHOR: (f32, f32) = ((SCREAM_HEAD_X + 19) as f32, (HEAD_Y + 6) as f32);
 
 pub const RUN_FRAMES: usize = 8;
+/// The frame after the run cycle: standing still, all four paws down (with
+/// its mouth shut, unless it's screaming).
+pub const STAND: usize = RUN_FRAMES;
 const STRIDE: f32 = 8.0;
 const LIFT: f32 = 2.6;
 
@@ -315,13 +337,16 @@ struct Leg {
     hip: (f32, f32),
     phase: f32,
     near: bool,
+    /// Where the paw is when standing still, from under the hip: far paws
+    /// a little back, near ones a little forward, so all four show.
+    stand: f32,
 }
 
 const LEGS: [Leg; 4] = [
-    Leg { hip: (23.0, 23.0), phase: 0.7, near: false }, // back, far side
-    Leg { hip: (40.0, 21.5), phase: PI + 0.7, near: false }, // front, far side
-    Leg { hip: (26.5, 23.5), phase: 0.0, near: true },  // back, near side
-    Leg { hip: (43.5, 22.0), phase: PI, near: true },   // front, near side
+    Leg { hip: (23.0, 23.0), phase: 0.7, near: false, stand: -1.0 }, // back, far side
+    Leg { hip: (40.0, 21.5), phase: PI + 0.7, near: false, stand: -1.0 }, // front, far side
+    Leg { hip: (26.5, 23.5), phase: 0.0, near: true, stand: 1.5 },   // back, near side
+    Leg { hip: (43.5, 22.0), phase: PI, near: true, stand: 1.5 },    // front, near side
 ];
 
 /// Paw position for a gait phase: on the ground sliding backwards for the
@@ -338,8 +363,8 @@ fn paw(hip_x: f32, phase: f32) -> (f32, f32) {
     }
 }
 
-fn draw_leg(c: &mut Canvas, hip: (f32, f32), phase: f32, dy: f32, near: bool) {
-    let (px, lift) = paw(hip.0, phase);
+/// A leg from `hip` down to its paw at `(px, lift)` (see `paw`).
+fn draw_leg(c: &mut Canvas, hip: (f32, f32), (px, lift): (f32, f32), dy: f32, near: bool) {
     let foot_y = GROUND as f32 - lift;
     let hip = (hip.0, hip.1 + dy);
     let color = if near { BLACK } else { LEG_FAR };
@@ -426,22 +451,29 @@ fn draw_body(c: &mut Canvas, dy: f32) {
     }
 }
 
-/// One frame of the run cycle.
+/// One frame of the run cycle, or `STAND`.
 fn possum_frame(frame: usize, screaming: bool) -> Canvas {
     let mut c = Canvas::new(POSSUM_W, POSSUM_H);
+    let standing = frame == STAND;
     let phase = frame as f32 / RUN_FRAMES as f32 * TAU;
     // Bob up twice per stride, when the paws are pushing off.
-    let dy = if matches!(frame % 4, 1 | 2) { -1.0 } else { 0.0 };
+    let dy = if !standing && matches!(frame % 4, 1 | 2) { -1.0 } else { 0.0 };
+    // Standing, every paw is on the ground, about under its hip.
+    let gait = |leg: &Leg| if standing { (leg.hip.0 + leg.stand, 0.0) } else { paw(leg.hip.0, phase + leg.phase) };
 
-    draw_tail(&mut c, dy, (phase).sin() * 1.6);
+    draw_tail(&mut c, dy, if standing { 0.0 } else { phase.sin() * 1.6 });
     for leg in LEGS.iter().filter(|l| !l.near) {
-        draw_leg(&mut c, leg.hip, phase + leg.phase, dy, false);
+        draw_leg(&mut c, leg.hip, gait(leg), dy, false);
     }
     draw_body(&mut c, dy);
     for leg in LEGS.iter().filter(|l| l.near) {
-        draw_leg(&mut c, leg.hip, phase + leg.phase, dy, true);
+        draw_leg(&mut c, leg.hip, gait(leg), dy, true);
     }
-    let (head, hx): (&[&str], i32) = if screaming { (&HEAD_SCREAM, SCREAM_HEAD_X) } else { (&HEAD_OPEN, HEAD_X) };
+    let (head, hx): (&[&str], i32) = match (screaming, standing) {
+        (true, _) => (&HEAD_SCREAM, SCREAM_HEAD_X),
+        (false, true) => (&HEAD_SHUT, HEAD_X),
+        (false, false) => (&HEAD_OPEN, HEAD_X),
+    };
     // While screaming the head shakes with the effort of it.
     let shake = if screaming && frame % 2 == 1 { -1 } else { 0 };
     c.stamp(head, hx, HEAD_Y + dy as i32 + shake);
@@ -449,6 +481,7 @@ fn possum_frame(frame: usize, screaming: bool) -> Canvas {
     c
 }
 
+/// The possum's frames: the run cycle, then the standing frame (`STAND`).
 pub struct PossumArt {
     pub run: Vec<Canvas>,
     pub scream: Vec<Canvas>,
@@ -456,8 +489,8 @@ pub struct PossumArt {
 
 pub fn possum() -> PossumArt {
     PossumArt {
-        run: (0..RUN_FRAMES).map(|f| possum_frame(f, false)).collect(),
-        scream: (0..RUN_FRAMES).map(|f| possum_frame(f, true)).collect(),
+        run: (0..=STAND).map(|f| possum_frame(f, false)).collect(),
+        scream: (0..=STAND).map(|f| possum_frame(f, true)).collect(),
     }
 }
 
@@ -616,7 +649,7 @@ mod tests {
 
     #[test]
     fn head_grids_are_rectangular() {
-        for row in HEAD_OPEN {
+        for row in HEAD_OPEN.iter().chain(HEAD_SHUT.iter()) {
             assert_eq!(row.len(), 18, "bad row: {row:?}");
         }
         for row in HEAD_SCREAM {
@@ -625,9 +658,23 @@ mod tests {
     }
 
     #[test]
+    fn standing_it_has_four_paws_down_and_its_mouth_shut() {
+        let art = possum();
+        let stand = &art.run[STAND];
+        // Each paw is a 4-pixel pink run on the ground row.
+        let row: Vec<u8> = (0..stand.w).map(|x| stand.get(x, GROUND)).collect();
+        let paws = row.windows(2).filter(|w| w[0] != PINK && w[1] == PINK).count();
+        assert_eq!(paws, 4, "{row:?}");
+        assert!(!stand.px.iter().any(|&p| p == TOOTH || p == TONGUE), "the mouth should be shut");
+        // Screaming Now while standing still: the mouth is wide open.
+        assert!(art.scream[STAND].px.contains(&TOOTH));
+    }
+
+    #[test]
     fn frames_have_expected_size_and_content() {
         let art = possum();
-        assert_eq!(art.run.len(), RUN_FRAMES);
+        assert_eq!(art.run.len(), RUN_FRAMES + 1);
+        assert_eq!(art.scream.len(), RUN_FRAMES + 1);
         for f in art.run.iter().chain(art.scream.iter()) {
             assert_eq!((f.w, f.h), (POSSUM_W, POSSUM_H));
             let opaque = f.px.iter().filter(|&&p| p != CLEAR).count();

@@ -225,10 +225,16 @@ if [ $app = 1 ]; then
     drive click 400 300 wait 800 menu closed || finish "clicking the icon again didn't close the menu"
     echo "clicking it again closes it"
     before=$(screams)
-    # From the bottom: Quit Possum, then Scream Now.
-    drive click 400 300 wait 800 key up up enter wait 600 || finish "couldn't choose Scream Now"
+    # From the bottom: Quit Possum, Stop (or Run), Scream Now.
+    drive click 400 300 wait 800 key up up up enter wait 600 || finish "couldn't choose Scream Now"
     [ "$(screams)" -gt "$before" ] || finish "Scream Now didn't start a scream"
     echo "Scream Now screams"
+    drive click 400 300 wait 800 key up up enter wait 1500 || finish "couldn't choose Stop"
+    grep -q "\] standing still$" "$log" || finish "Stop didn't make it stand still"
+    echo "Stop makes it stand still"
+    drive click 400 300 wait 800 key up up enter wait 600 || finish "couldn't choose Run"
+    grep -q "\] running again$" "$log" || finish "Run didn't set it off again"
+    echo "Run sets it off again"
     drive click 400 300 wait 800 key up enter || finish "couldn't choose Quit Possum"
     for _ in $(seq 20); do stopped && break; sleep 0.25; done
     stopped || finish "Quit Possum didn't quit"

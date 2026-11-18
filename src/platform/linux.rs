@@ -22,6 +22,9 @@
 //!   screams silently.
 //! * The menu is a StatusNotifierItem tray icon (KDE, most desktops; GNOME
 //!   with the AppIndicator extension, which Ubuntu ships enabled).
+//! * Its size: RandR says how many millimetres the primary monitor measures
+//!   (on Wayland desktops, as the compositor told Xwayland), which makes the
+//!   possum about 2 cm tall (see size.rs).
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -40,10 +43,11 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
-use crate::brain::{self, Brain, Host, QUIT, SCREAM_NOW, SILENT, Scene, Settings};
+use crate::brain::{self, Brain, Host, QUIT, SCREAM_NOW, SILENT, STOPPED, Scene, Settings};
 use crate::quiet::Hush;
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
+use crate::size::{self, Size};
 use crate::{Options, quiet, screens, sprite};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -72,30 +76,44 @@ fn try_run(opts: &Options) -> Result<()> {
     let durations = voices.each_ref().map(|v| v.iter().map(|s| s.seconds).collect());
     let mut sounds = Sounds::new(&voices, opts.volume)?;
 
-    let screen = x.primary_monitor();
-    let settings = Settings { scale: opts.scale, speed: opts.speed, start: opts.start, verbose: opts.verbose };
+    let (screen, display) = x.primary_monitor();
+    let size = Size::pick(opts.scale, opts.speed, display, 1.0);
+    let settings = Settings { scale: size.scale, speed: size.speed, start: opts.start, verbose: opts.verbose };
     let mut brain = Brain::new(&settings, screen.w, screen.h, durations, rng);
     brain.update(sounds.probe());
     brain.log(format_args!("running around the primary display, {}x{}", screen.w, screen.h));
+    brain.log(format_args!("{}", size.describe(display, opts.scale.is_some())));
     if sounds.player.is_none() {
         eprintln!("possum: no audio player found (pw-play, paplay or aplay), so it screams silently");
     }
 
     let tray = start_tray();
     let art = Art::new();
-    let reach = render::reach(&art, opts.scale);
-    let mut app = App { x, art, sounds, brain, screen, scale: opts.scale, reach, possum_key: None, bubble_key: None };
+    let reach = render::reach(&art, size.scale);
+    let mut app = App {
+        x,
+        art,
+        sounds,
+        brain,
+        screen,
+        options: (opts.scale, opts.speed),
+        scale: size.scale,
+        reach,
+        possum_key: None,
+        bubble_key: None,
+    };
 
     let clock = Instant::now();
     let frame = Duration::from_secs_f64(1.0 / 60.0);
     let mut next = Instant::now();
-    let mut menu_silent = brain::silent_now();
+    let menu_state = || (brain::silent_now(), STOPPED.load(Ordering::Relaxed));
+    let mut menu_shows = menu_state();
     while !QUIT.load(Ordering::Relaxed) {
         app.tick(clock.elapsed().as_secs_f64())?;
-        // The menu shows whether it screams silently, which Do Not Disturb
-        // changes too.
-        if brain::silent_now() != menu_silent {
-            menu_silent = !menu_silent;
+        // The menu shows whether it screams silently (which Do Not Disturb
+        // changes too) and whether it's stopped.
+        if menu_state() != menu_shows {
+            menu_shows = menu_state();
             if let Some(tray) = &tray {
                 tray.update(|_| {});
             }
@@ -226,14 +244,18 @@ impl X11 {
         Ok(Self { conn, root, possum, bubble, gc, max_chunk, bubble_mapped: false })
     }
 
-    /// The primary monitor in root-window coordinates (y-down).
-    fn primary_monitor(&self) -> screens::Rect {
+    /// The primary monitor in root-window coordinates (y-down), and how big
+    /// it is, if it says.
+    fn primary_monitor(&self) -> (screens::Rect, Option<size::Display>) {
         let monitors = self.conn.randr_get_monitors(self.root, true).ok().and_then(|c| c.reply().ok());
         if let Some(m) = monitors.as_ref().and_then(|r| r.monitors.iter().find(|m| m.primary).or(r.monitors.first())) {
-            return screens::Rect::new(m.x as f64, m.y as f64, m.width as f64, m.height as f64);
+            let (w, h) = (m.width as f64, m.height as f64);
+            let mm = (m.width_in_millimeters as f64, m.height_in_millimeters as f64);
+            return (screens::Rect::new(m.x as f64, m.y as f64, w, h), size::Display::new((w, h), mm, 1.0));
         }
+        // No RandR: the core protocol's millimetres are made up from 96 dpi.
         let s = &self.conn.setup().roots[0];
-        screens::Rect::new(0.0, 0.0, s.width_in_pixels as f64, s.height_in_pixels as f64)
+        (screens::Rect::new(0.0, 0.0, s.width_in_pixels as f64, s.height_in_pixels as f64), None)
     }
 
     /// Draws an image into a window, cuts the window to the image's shape,
@@ -577,8 +599,10 @@ impl ksni::Tray for Tray {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{RadioGroup, RadioItem, StandardItem};
         let item = |label: &str| StandardItem { label: label.into(), ..Default::default() };
+        let stopped = STOPPED.load(Ordering::Relaxed);
+        let status = if stopped { "Possum is standing still" } else { "Possum is running!" };
         vec![
-            StandardItem { enabled: false, ..item("Possum is running!") }.into(),
+            StandardItem { enabled: false, ..item(status) }.into(),
             ksni::MenuItem::Separator,
             RadioGroup {
                 // In Do Not Disturb it screams silently, whatever was picked.
@@ -599,6 +623,14 @@ impl ksni::Tray for Tray {
             StandardItem {
                 activate: Box::new(|_: &mut Self| SCREAM_NOW.store(true, Ordering::Relaxed)),
                 ..item("Scream Now")
+            }
+            .into(),
+            // ksni builds the menu again after a click, with the other label.
+            StandardItem {
+                activate: Box::new(|_: &mut Self| {
+                    STOPPED.fetch_xor(true, Ordering::Relaxed);
+                }),
+                ..item(if stopped { "Run" } else { "Stop" })
             }
             .into(),
             ksni::MenuItem::Separator,
@@ -641,6 +673,8 @@ struct App {
     brain: Brain,
     /// The primary monitor, y-down root coordinates.
     screen: screens::Rect,
+    /// `--scale` and `--speed`, if given.
+    options: (Option<f64>, Option<f64>),
     scale: f64,
     reach: usize,
     possum_key: Option<(bool, usize, Option<usize>, u64)>,
@@ -670,11 +704,23 @@ impl App {
         Ok(())
     }
 
+    /// Follows the primary monitor, and keeps the possum about 2 cm tall on
+    /// it.
     fn check_screen(&mut self) {
-        let primary = Some(self.x.primary_monitor());
-        if let Some(frame) = screens::follow(primary, self.screen, self.screen) {
-            self.screen = frame;
-            self.brain.set_screen(frame.w, frame.h);
+        let (primary, display) = self.x.primary_monitor();
+        let size = Size::pick(self.options.0, self.options.1, display, 1.0);
+        let moved = screens::follow(Some(primary), self.screen, self.screen).is_some();
+        if !moved && size.scale == self.scale {
+            return;
+        }
+        self.screen = primary;
+        self.brain.set_screen(primary.w, primary.h, size.scale, size.speed);
+        if size.scale != self.scale {
+            self.brain.log(format_args!("{}", size.describe(display, self.options.0.is_some())));
+            self.scale = size.scale;
+            self.reach = render::reach(&self.art, size.scale);
+            self.possum_key = None;
+            self.bubble_key = None;
         }
     }
 

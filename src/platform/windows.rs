@@ -11,8 +11,11 @@
 //! * Quiet times: session notifications (lock/unlock, switching users),
 //!   display power notifications (on/off), system sleep, plus a check of
 //!   the screensaver and the secure (lock) desktop every second.
-//! * Per-monitor DPI aware: the possum is the same physical size as on a
-//!   Mac at 100% scaling, bigger at 125%, 150%...
+//! * Per-monitor DPI aware, in physical pixels: the possum is about 2 cm
+//!   tall whatever the display scaling, from the monitor's raw DPI (its
+//!   pixels per inch, measured from its own description of its size). When
+//!   Windows doesn't know that, 3 pixels a sprite pixel at 100% display
+//!   scaling, more at 125%, 150%... (see size.rs).
 
 use std::cell::RefCell;
 use std::ffi::{CStr, c_char, c_void};
@@ -38,7 +41,8 @@ use windows_sys::Win32::System::RemoteDesktop::{NOTIFY_FOR_THIS_SESSION, WTSRegi
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, DESKTOP_SWITCHDESKTOP, OpenInputDesktop};
 use windows_sys::Win32::System::SystemServices::GUID_CONSOLE_DISPLAY_STATE;
 use windows_sys::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, MDT_EFFECTIVE_DPI, MDT_RAW_DPI,
+    SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_SELECT,
@@ -59,10 +63,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WTS_SESSION_UNLOCK,
 };
 
-use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, Scene, Settings};
+use crate::brain::{self, Brain, Host, SCREAM_NOW, SILENT, STOPPED, Scene, Settings};
 use crate::quiet::Hush;
 use crate::render::{self, Art, Image};
 use crate::scream::{Kind, Rng};
+use crate::size::{self, Size};
 use crate::{Options, quiet, screens, sprite};
 
 /// The tray icon's messages come back as this.
@@ -73,6 +78,7 @@ const MENU_SCREAM: usize = 1;
 const MENU_SCREAM_SILENTLY: usize = 2;
 const MENU_SCREAM_NOW: usize = 3;
 const MENU_QUIT: usize = 4;
+const MENU_STOP_OR_RUN: usize = 5;
 
 /// What Windows told us since the last tick (see quiet.rs), and whether the
 /// displays changed.
@@ -148,14 +154,20 @@ pub fn run(opts: &Options) {
     // PlaySound has no volume control: bake the volume into the samples.
     let mut sounds = Sounds(voices.map(|v| v.iter().map(|s| s.wav_at_volume(opts.volume)).collect()));
 
-    let (screen, dpi_scale) = primary_monitor();
-    // Windows works in physical pixels: scale sizes and speed like the
-    // user's display scaling (100% = 96 DPI).
-    let scale = opts.scale * dpi_scale;
-    let settings = Settings { scale, speed: opts.speed * dpi_scale, start: opts.start, verbose: opts.verbose };
+    let monitor = primary_monitor();
+    let screen = monitor.rect;
+    // Windows works in physical pixels: about 2 cm tall from the monitor's
+    // raw DPI, else like the user's display scaling (100% = 96 DPI).
+    let size = Size::pick(opts.scale, opts.speed, monitor.display(), monitor.scaling);
+    let scale = size.scale;
+    let settings = Settings { scale, speed: size.speed, start: opts.start, verbose: opts.verbose };
     let mut brain = Brain::new(&settings, screen.w, screen.h, durations, rng);
     brain.update(sounds.probe());
     brain.log(format_args!("running around the primary display, {}x{} pixels", screen.w, screen.h));
+    let raw = monitor.raw_dpi.map_or("unknown".to_string(), |dpi| format!("{dpi} dpi"));
+    let wine = if wine() { " (Wine's, not measured)" } else { "" };
+    brain.log(format_args!("display scaling {}%, raw DPI {raw}{wine}", (monitor.scaling * 100.0).round()));
+    brain.log(format_args!("{}", size.describe(monitor.display(), opts.scale.is_some())));
     if let Some(host) = wine_host_system() {
         brain.log(format_args!("running under Wine on {host}"));
     }
@@ -243,6 +255,7 @@ pub fn run(opts: &Options) {
             sounds,
             brain,
             screen,
+            options: (opts.scale, opts.speed),
             scale,
             reach,
             clock: *CLOCK.get_or_init(Instant::now),
@@ -272,10 +285,31 @@ pub fn run(opts: &Options) {
     TRAY.with(|tray| tray.borrow_mut().take());
 }
 
-/// The primary monitor's frame in virtual-screen pixels (y-down), and its
-/// display scaling (1.0 at 100%). Under Wine on a Mac, just the part between
-/// the menu bar and the Dock (see `wine_on_mac`).
-fn primary_monitor() -> (screens::Rect, f64) {
+/// The primary monitor, as Windows sees it.
+struct Monitor {
+    /// Its frame in virtual-screen pixels (y-down). Under Wine on a Mac,
+    /// just the part between the menu bar and the Dock (see `wine_on_mac`).
+    rect: screens::Rect,
+    /// Its display scaling: 1.0 at 100%.
+    scaling: f64,
+    /// How many of its pixels make an inch, measured on the monitor itself,
+    /// if Windows knows.
+    raw_dpi: Option<u32>,
+}
+
+impl Monitor {
+    /// How big the monitor is. Not under Wine: its raw DPI is about display
+    /// modes, not the screen's size, and is the plain DPI (96 at 100%) for
+    /// now; Wine doesn't know how big the screen is.
+    fn display(&self) -> Option<size::Display> {
+        if wine() {
+            return None;
+        }
+        self.raw_dpi.and_then(|dpi| size::Display::from_dpi(dpi as f64, (self.rect.w, self.rect.h)))
+    }
+}
+
+fn primary_monitor() -> Monitor {
     // SAFETY: plain Win32 queries with valid out-pointers.
     unsafe {
         let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
@@ -284,9 +318,13 @@ fn primary_monitor() -> (screens::Rect, f64) {
         let r = if wine_on_mac() { info.rcWork } else { info.rcMonitor };
         let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
         GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
-        let rect =
-            screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64);
-        (rect, dpi_x.max(96) as f64 / 96.0)
+        let (mut raw_x, mut raw_y) = (0u32, 0u32);
+        let raw = GetDpiForMonitor(monitor, MDT_RAW_DPI, &mut raw_x, &mut raw_y) >= 0 && raw_x > 0;
+        Monitor {
+            rect: screens::Rect::new(r.left as f64, r.top as f64, (r.right - r.left) as f64, (r.bottom - r.top) as f64),
+            scaling: dpi_x.max(96) as f64 / 96.0,
+            raw_dpi: raw.then_some(raw_x),
+        }
     }
 }
 
@@ -359,6 +397,12 @@ fn tell_why_silent(hush: Hush) {
 fn wine_on_mac() -> bool {
     static ON_MAC: OnceLock<bool> = OnceLock::new();
     *ON_MAC.get_or_init(|| wine_host_system().as_deref() == Some("Darwin"))
+}
+
+/// Whether this is Wine rather than Windows.
+fn wine() -> bool {
+    static WINE: OnceLock<bool> = OnceLock::new();
+    *WINE.get_or_init(|| wine_host_system().is_some())
 }
 
 /// The system Wine runs on ("Darwin" for macOS, "Linux"...), or None on
@@ -638,12 +682,14 @@ fn show_menu(main: HWND, at: Option<POINT>) {
             let text = wide(text);
             AppendMenuW(menu, flags, id, text.as_ptr());
         };
-        add(MF_STRING | MF_GRAYED, 0, "Possum is running!");
+        let stopped = STOPPED.load(Ordering::Relaxed);
+        add(MF_STRING | MF_GRAYED, 0, if stopped { "Possum is standing still" } else { "Possum is running!" });
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         add(MF_STRING | if silent { 0 } else { MF_CHECKED }, MENU_SCREAM, "Scream");
         add(MF_STRING | if silent { MF_CHECKED } else { 0 }, MENU_SCREAM_SILENTLY, "Scream silently");
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         add(MF_STRING, MENU_SCREAM_NOW, "Scream Now");
+        add(MF_STRING, MENU_STOP_OR_RUN, if stopped { "Run" } else { "Stop" });
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         add(MF_STRING, MENU_QUIT, "Quit Possum");
 
@@ -670,6 +716,9 @@ fn show_menu(main: HWND, at: Option<POINT>) {
             }
             MENU_SCREAM_SILENTLY => SILENT.store(true, Ordering::Relaxed),
             MENU_SCREAM_NOW => SCREAM_NOW.store(true, Ordering::Relaxed),
+            MENU_STOP_OR_RUN => {
+                STOPPED.fetch_xor(true, Ordering::Relaxed);
+            }
             MENU_QUIT => PostQuitMessage(0),
             _ => {}
         }
@@ -827,6 +876,8 @@ struct App {
     brain: Brain,
     /// The primary monitor, y-down virtual-screen pixels.
     screen: screens::Rect,
+    /// `--scale` and `--speed`, if given.
+    options: (Option<f64>, Option<f64>),
     scale: f64,
     reach: usize,
     clock: Instant,
@@ -864,11 +915,23 @@ impl App {
         self.draw(&scene);
     }
 
+    /// Follows the primary monitor, and keeps the possum about 2 cm tall on
+    /// it.
     fn check_screen(&mut self) {
-        let (primary, _) = primary_monitor();
-        if let Some(frame) = screens::follow(Some(primary), self.screen, self.screen) {
-            self.screen = frame;
-            self.brain.set_screen(frame.w, frame.h);
+        let monitor = primary_monitor();
+        let size = Size::pick(self.options.0, self.options.1, monitor.display(), monitor.scaling);
+        let moved = screens::follow(Some(monitor.rect), self.screen, self.screen).is_some();
+        if !moved && size.scale == self.scale {
+            return;
+        }
+        self.screen = monitor.rect;
+        self.brain.set_screen(monitor.rect.w, monitor.rect.h, size.scale, size.speed);
+        if size.scale != self.scale {
+            self.brain.log(format_args!("{}", size.describe(monitor.display(), self.options.0.is_some())));
+            self.scale = size.scale;
+            self.reach = render::reach(&self.art, size.scale);
+            self.possum_key = None;
+            self.bubble_key = None;
         }
     }
 

@@ -57,6 +57,9 @@ final class Native {
 
     static native int statusIcon();
 
+    /** The picture for the app's screen: the possum mid-scream. */
+    static native int portrait();
+
     static native float[] layout();
 
     static native int sampleRate();
